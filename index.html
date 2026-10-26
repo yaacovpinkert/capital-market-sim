@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Capital Market Trading Simulator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>▲ CapitalSim <span class="sub">simulated capital market · no real money</span></h1>
+  <div class="head-right">
+    <label>Speed
+      <select id="speed">
+        <option value="1000">1×</option>
+        <option value="500" selected>2×</option>
+        <option value="200">5×</option>
+        <option value="0">Paused</option>
+      </select>
+    </label>
+    <button id="reset" class="ghost">Reset account</button>
+  </div>
+</header>
+
+<section class="summary">
+  <div><span>Equity</span><b id="eq">–</b></div>
+  <div><span>Cash</span><b id="cash">–</b></div>
+  <div><span>Day P&amp;L</span><b id="pnl">–</b></div>
+  <div><span>Realized P&amp;L</span><b id="rpnl">–</b></div>
+</section>
+
+<div id="ticker" class="ticker"></div>
+<div id="news" class="news">Markets open. Good luck.</div>
+
+<main>
+  <section class="panel chart-panel">
+    <div class="panel-head"><b id="chartTitle"></b><span id="chartPrice"></span></div>
+    <canvas id="chart"></canvas>
+  </section>
+
+  <section class="panel book-panel">
+    <div class="panel-head"><b>Order book</b></div>
+    <table id="book"></table>
+  </section>
+
+  <section class="panel ticket">
+    <div class="panel-head"><b>Order ticket</b></div>
+    <div class="seg" id="sideSeg">
+      <button data-side="buy" class="on buy">Buy</button>
+      <button data-side="sell" class="sell">Sell</button>
+    </div>
+    <label>Type
+      <select id="otype">
+        <option value="market">Market</option>
+        <option value="limit">Limit</option>
+        <option value="stop">Stop</option>
+      </select>
+    </label>
+    <label>Quantity <input id="qty" type="number" min="1" step="1" value="10"></label>
+    <label id="priceRow" hidden>Price <input id="oprice" type="number" min="0.01" step="0.01"></label>
+    <div class="est" id="est"></div>
+    <button id="submit" class="primary buy">Place buy order</button>
+    <div id="msg" class="msg"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><b>Positions</b></div>
+    <table id="positions"></table>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><b>Open orders</b></div>
+    <table id="orders"></table>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><b>Equity curve</b></div>
+    <canvas id="eqchart"></canvas>
+  </section>
+
+  <section class="panel wide">
+    <div class="panel-head"><b>Trade history</b></div>
+    <table id="history"></table>
+  </section>
+</main>
+
+<footer>Educational simulation with randomly generated prices. Not investment advice.</footer>
+<script src="app.js"></script>
+</body>
+</html>
