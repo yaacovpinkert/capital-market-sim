@@ -8,8 +8,14 @@
 </head>
 <body>
 <header>
-  <h1>▲ CapitalSim <span class="sub">simulated capital market · no real money</span></h1>
+  <h1>▲ CapitalSim <span class="sub">paper trading · no real money</span></h1>
   <div class="head-right">
+    <label>Data
+      <select id="mode">
+        <option value="live">Live crypto (Binance)</option>
+        <option value="sim">Simulated stocks</option>
+      </select>
+    </label>
     <label>Speed
       <select id="speed">
         <option value="1000">1×</option>
@@ -56,8 +62,8 @@
         <option value="stop">Stop</option>
       </select>
     </label>
-    <label>Quantity <input id="qty" type="number" min="1" step="1" value="10"></label>
-    <label id="priceRow" hidden>Price <input id="oprice" type="number" min="0.01" step="0.01"></label>
+    <label>Quantity <input id="qty" type="number" min="0" step="any" value="10"></label>
+    <label id="priceRow" hidden>Price <input id="oprice" type="number" min="0" step="any"></label>
     <div class="est" id="est"></div>
     <button id="submit" class="primary buy">Place buy order</button>
     <div id="msg" class="msg"></div>
@@ -84,7 +90,7 @@
   </section>
 </main>
 
-<footer>Educational simulation with randomly generated prices. Not investment advice.</footer>
+<footer>Live mode: real Binance market prices and order book, paper-traded. Simulated mode: randomly generated prices. Educational only, not investment advice.</footer>
 <script src="app.js"></script>
 </body>
 </html>
