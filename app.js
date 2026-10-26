@@ -7,12 +7,16 @@ const MAX_CANDLES = 80;
 const SAVE_KEY = 'capitalsim-sim-v2';
 const LIVE_KEY = 'capitalsim-live-v1';
 const MODE_KEY = 'capitalsim-mode';
+const THEME_KEY = 'capitalsim-theme';
+const US_KEY = 'capitalsim-us-v1';
+const FH_KEY = 'capitalsim-finnhub-key';
 const API = 'https://data-api.binance.vision/api/v3';
 const WS = 'wss://data-stream.binance.vision/stream';
 const MIN_NOTIONAL = 10; // live mode: minimum order value in $
 
 const $ = id => document.getElementById(id);
 const rq = x => Math.round(x * 1e6) / 1e6; // quantities: 6 decimals
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fq = (q, d = 6) => (Number.isInteger(q) ? String(q) : q.toFixed(d).replace(/0+$/, '').replace(/\.$/, ''));
 const money = n => (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fp = (s, x) => x.toFixed(s.dp);          // price with the symbol's decimals
@@ -131,7 +135,7 @@ const reservedCash = () => account.orders.filter(o => o.side === 'buy').reduce((
 const reservedShares = sym => rq(account.orders.filter(o => o.side === 'sell' && o.sym === sym).reduce((a, o) => a + o.qty, 0));
 
 function equity() {
-  return account.cash + Object.entries(account.positions).reduce((a, [sym, p]) => a + p.qty * stockOf(sym).price, 0);
+  return account.cash + Object.entries(account.positions).reduce((a, [sym, p]) => a + (p.qty && stockOf(sym) ? p.qty * stockOf(sym).price : 0), 0);
 }
 
 function execute(sym, side, qty, price, kind) {
@@ -216,6 +220,7 @@ function tick() {
       buildBook(s);
     }
   }
+  if (mode === 'us') pollUs();
   processOrders();
   account.equityCurve.push(equity());
   if (account.equityCurve.length > 300) account.equityCurve.shift();
@@ -226,6 +231,20 @@ function tick() {
 function setSpeed(ms) {
   clearInterval(timer);
   if (ms > 0) timer = setInterval(tick, ms);
+}
+
+// ---------- Theme ----------
+let C = {};
+function readTheme() {
+  const cs = getComputedStyle(document.documentElement), v = n => cs.getPropertyValue(n).trim();
+  C = { mute: v('--mute'), line: v('--line'), up: v('--up'), down: v('--down'), ma: v('--ma'), accent: v('--accent'), order: v('--order') };
+}
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* ignore */ }
+  $('theme').textContent = t === 'dark' ? '☀ Light mode' : '🌙 Dark mode';
+  readTheme();
+  if (ready) render();
 }
 
 // ---------- Rendering ----------
@@ -240,6 +259,7 @@ const ok = t => (flash(t, false), true);
 function render() {
   if (!ready) return;
   if (mode === 'live') $('news').innerHTML = `<b>LIVE</b> Binance public market data · ${wsState} · orders are paper-traded against the real order book`;
+  if (mode === 'us' && fhKey) $('news').innerHTML = `<b>LIVE</b> US stock quotes via Finnhub (real prices, depth is synthesised)${usStatus ? ` · <span class="down">${usStatus}</span>` : ''}${marketNote(stockOf(selected))}`;
   const s = stockOf(selected);
   const eq = equity();
   $('eq').textContent = money(eq);
@@ -252,7 +272,7 @@ function render() {
 
   $('ticker').innerHTML = stocks.map(x => {
     const ch = (x.price / x.open - 1) * 100;
-    return `<div class="tick ${x.sym === selected ? 'sel' : ''}" data-sym="${x.sym}"><b>${x.sym}</b>${mp(x, x.price)}<br><small class="${cls(ch)}">${ch >= 0 ? '▲' : '▼'} ${ch.toFixed(2)}%</small></div>`;
+    return `<div class="tick ${x.sym === selected ? 'sel' : ''}" data-sym="${x.sym}">${mode === 'us' ? `<button class="x rm" data-rm="${x.sym}" title="Remove">✕</button>` : ''}<b>${x.sym}</b>${mp(x, x.price)}<br><small class="${cls(ch)}">${ch >= 0 ? '▲' : '▼'} ${ch.toFixed(2)}%</small></div>`;
   }).join('');
 
   $('chartTitle').textContent = `${s.sym} · ${s.name}`;
@@ -303,7 +323,7 @@ function drawChart(s) {
   const rng = (hi - lo) || 1, top = hi + rng * 0.05, bot = lo - rng * 0.05;
   const y = v => (h - padB) * (1 - (v - bot) / (top - bot));
   const cw = (w - padR) / MAX_CANDLES;
-  g.font = '11px system-ui'; g.fillStyle = '#8b98a9'; g.strokeStyle = '#263040'; g.lineWidth = 1;
+  g.font = '11px system-ui'; g.fillStyle = C.mute; g.strokeStyle = C.line; g.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const v = bot + (top - bot) * i / 4, yy = y(v);
     g.beginPath(); g.moveTo(0, yy); g.lineTo(w - padR, yy); g.stroke();
@@ -311,13 +331,13 @@ function drawChart(s) {
   }
   cs.forEach((c, i) => {
     const x = i * cw + cw / 2, up = c.c >= c.o;
-    g.strokeStyle = g.fillStyle = up ? '#26a69a' : '#ef5350';
+    g.strokeStyle = g.fillStyle = up ? C.up : C.down;
     g.beginPath(); g.moveTo(x, y(c.h)); g.lineTo(x, y(c.l)); g.stroke();
     const yt = y(Math.max(c.o, c.c)), hh = Math.max(1, Math.abs(y(c.o) - y(c.c)));
     g.fillRect(x - cw * 0.35, yt, cw * 0.7, hh);
   });
   // 10-period moving average
-  g.strokeStyle = '#f0b429'; g.lineWidth = 1.5; g.beginPath();
+  g.strokeStyle = C.ma; g.lineWidth = 1.5; g.beginPath();
   cs.forEach((c, i) => {
     if (i < 9) return;
     const m = cs.slice(i - 9, i + 1).reduce((a, k) => a + k.c, 0) / 10;
@@ -332,8 +352,8 @@ function drawChart(s) {
     g.beginPath(); g.moveTo(0, y(v)); g.lineTo(w - padR, y(v)); g.stroke(); g.setLineDash([]);
     g.fillStyle = col; g.fillText(label, 6, y(v) - 3);
   };
-  if (p && p.qty > 0) line(p.avg, '#3b82f6', `avg cost ${fp(s, p.avg)}`);
-  account.orders.filter(o => o.sym === s.sym).forEach(o => line(o.price, '#b388ff', `${o.type} ${o.side} #${o.id}`));
+  if (p && p.qty > 0) line(p.avg, C.accent, `avg cost ${fp(s, p.avg)}`);
+  account.orders.filter(o => o.sym === s.sym).forEach(o => line(o.price, C.order, `${o.type} ${o.side} #${o.id}`));
   g.lineWidth = 1;
 }
 
@@ -342,9 +362,9 @@ function drawEquity() {
   const d = account.equityCurve;
   const hi = Math.max(...d, account.startEquity), lo = Math.min(...d, account.startEquity), rng = (hi - lo) || 1;
   const y = v => h - 4 - (h - 8) * (v - lo) / rng;
-  g.strokeStyle = '#263040'; g.setLineDash([4, 4]);
+  g.strokeStyle = C.line; g.setLineDash([4, 4]);
   g.beginPath(); g.moveTo(0, y(account.startEquity)); g.lineTo(w, y(account.startEquity)); g.stroke(); g.setLineDash([]);
-  g.strokeStyle = d[d.length - 1] >= account.startEquity ? '#26a69a' : '#ef5350'; g.lineWidth = 2; g.beginPath();
+  g.strokeStyle = d[d.length - 1] >= account.startEquity ? C.up : C.down; g.lineWidth = 2; g.beginPath();
   d.forEach((v, i) => { const x = i / Math.max(1, d.length - 1) * w; i ? g.lineTo(x, y(v)) : g.moveTo(x, y(v)); });
   g.stroke();
 }
@@ -364,6 +384,8 @@ function updateEstimate() {
 
 function bind() {
   $('ticker').addEventListener('click', e => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) return removeTicker(rm.dataset.rm);
     const t = e.target.closest('[data-sym]');
     if (t) { selected = t.dataset.sym; delete $('oprice').dataset.touched; setDefaultQty(); render(); }
   });
@@ -388,6 +410,32 @@ function bind() {
   });
   $('speed').addEventListener('change', e => setSpeed(+e.target.value));
   $('mode').addEventListener('change', e => startMode(e.target.value));
+  $('theme').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+  $('keysave').addEventListener('click', async () => {
+    const k = $('keyinput').value.trim();
+    if (!k) return;
+    const old = fhKey; fhKey = k;
+    try {
+      await fhQuote('AAPL');
+      try { localStorage.setItem(FH_KEY, k); } catch (e) { /* ignore */ }
+      startMode('us');
+    } catch (e) { fhKey = old; $('keymsg').textContent = e.message; }
+  });
+  const sbox = $('search'), sres = $('results');
+  const showResults = () => {
+    const hits = searchTickers(sbox.value);
+    sres.hidden = !sbox.value.trim();
+    sres.innerHTML = !tickerDb ? '<div class="hit">Loading symbol list…</div>' : hits.length ? hits.map(h => `<div class="hit" data-add="${esc(h.s)}" data-name="${esc(h.n)}"><b>${esc(h.s)}</b> <small>${h.x}</small> ${esc(h.n)}</div>`).join('') : '<div class="hit">No matches</div>';
+  };
+  sbox.addEventListener('focus', () => loadTickers().then(showResults).catch(e => { sres.hidden = false; sres.innerHTML = `<div class="hit">Could not load symbol list (${e.message})</div>`; }));
+  sbox.addEventListener('input', showResults);
+  sres.addEventListener('click', e => {
+    const h = e.target.closest('[data-add]');
+    if (!h) return;
+    sres.hidden = true; sbox.value = '';
+    addTicker(h.dataset.add, h.dataset.name);
+  });
+  document.addEventListener('click', e => { if (!e.target.closest('.searchwrap')) sres.hidden = true; });
   $('reset').addEventListener('click', () => {
     if (!confirm('Reset this account?')) return;
     if (mode === 'sim') newGame(); else { account = newAccount(); nextOrderId = 1; }
@@ -396,11 +444,125 @@ function bind() {
   window.addEventListener('resize', render);
 }
 
+// ---------- US stocks: ticker search (GitHub-hosted lists) + Finnhub quotes (your own free key) ----------
+const TICKER_LISTS = ['nasdaq', 'nyse', 'amex'].map(x => `https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/${x}/${x}_full_tickers.json`);
+const FH = 'https://finnhub.io/api/v1';
+const DEFAULT_WATCH = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'SPY'];
+let tickerDb = null, tickerLoad = null, fhKey = '';
+try { fhKey = localStorage.getItem(FH_KEY) || ''; } catch (e) { /* ignore */ }
+
+function loadTickers() {
+  if (tickerDb) return Promise.resolve(tickerDb);
+  if (!tickerLoad) tickerLoad = Promise.all(TICKER_LISTS.map((u, i) => fetch(u).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(rows => rows.map(r => ({ s: r.symbol.trim(), n: r.name, x: ['NASDAQ', 'NYSE', 'AMEX'][i] })))))
+    .then(parts => (tickerDb = parts.flat().filter(t => /^[A-Z.\/-]{1,6}$/.test(t.s))))
+    .catch(e => { tickerLoad = null; throw e; });
+  return tickerLoad;
+}
+
+function searchTickers(q) {
+  q = q.trim().toLowerCase();
+  if (!q || !tickerDb) return [];
+  const score = t => {
+    const sy = t.s.toLowerCase();
+    if (sy === q) return 0;
+    if (sy.startsWith(q)) return 1;
+    if (t.n.toLowerCase().startsWith(q)) return 2;
+    return t.n.toLowerCase().includes(q) ? 3 : 9;
+  };
+  return tickerDb.map(t => [score(t), t]).filter(x => x[0] < 9).sort((a, b) => a[0] - b[0] || a[1].s.length - b[1].s.length).slice(0, 8).map(x => x[1]);
+}
+
+const fhSym = sym => sym.replace('/', '.');
+async function fhQuote(sym) {
+  const r = await fetch(`${FH}/quote?symbol=${encodeURIComponent(fhSym(sym))}&token=${encodeURIComponent(fhKey)}`);
+  if (r.status === 401 || r.status === 403) throw new Error('Invalid or unauthorised Finnhub key');
+  if (r.status === 429) throw new Error('Finnhub rate limit reached, slowing down');
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+function makeUsStock(sym, name) {
+  return { sym, name: name || sym, dp: 2, live: false, price: 0, open: 0, lastPoll: 0, quoteT: 0, candles: [], cur: null, book: { bids: [], asks: [] } };
+}
+
+const CANDLE_MS = 30000; // candles are built from the quotes seen while this page is open
+function applyQuote(s, q) {
+  if (!(q.c > 0)) return false;
+  s.price = q.c;
+  s.open = q.pc > 0 ? q.pc : q.c;
+  s.quoteT = (q.t || 0) * 1000;
+  s.dp = q.c < 1 ? 4 : 2;
+  const bucket = Math.floor(Date.now() / CANDLE_MS);
+  if (s.cur && s.cur.t !== bucket) { s.candles.push(s.cur); s.cur = null; }
+  if (!s.cur) s.cur = { t: bucket, o: q.c, h: q.c, l: q.c, c: q.c };
+  s.cur.h = Math.max(s.cur.h, q.c); s.cur.l = Math.min(s.cur.l, q.c); s.cur.c = q.c;
+  while (s.candles.length > MAX_CANDLES) s.candles.shift();
+  buildUsBook(s);
+  return true;
+}
+
+// Free feeds have no Level 2 data, so depth is synthesised around the last real price.
+function buildUsBook(s) {
+  const spread = Math.max(0.01, Number((s.price * 0.0004).toFixed(s.dp)));
+  const step = Math.max(Math.pow(10, -s.dp), Number((s.price * 0.0003).toFixed(s.dp)));
+  s.book = { bids: [], asks: [] };
+  for (let i = 0; i < 7; i++) {
+    s.book.bids.push({ p: Number((s.price - spread / 2 - i * step).toFixed(s.dp)), q: Math.round(100 + Math.random() * 900) });
+    s.book.asks.push({ p: Number((s.price + spread / 2 + i * step).toFixed(s.dp)), q: Math.round(100 + Math.random() * 900) });
+  }
+}
+
+let usStatus = '';
+let usBusy = false;
+async function pollUs() {
+  if (usBusy || !fhKey) return;
+  const now = Date.now();
+  const due = stocks.map(s => ({ s, over: (now - s.lastPoll) / (s.sym === selected ? 5000 : 20000) })).filter(x => x.over >= 1).sort((a, b) => b.over - a.over)[0];
+  if (!due) return;
+  const myGen = gen;
+  usBusy = true; due.s.lastPoll = now;
+  try {
+    const ok = applyQuote(due.s, await fhQuote(due.s.sym));
+    if (myGen === gen) usStatus = ok ? '' : `No quote data for ${due.s.sym}.`;
+  } catch (e) { if (myGen === gen) usStatus = e.message; }
+  usBusy = false;
+}
+
+async function addTicker(sym, name) {
+  if (stocks.some(s => s.sym === sym)) { selected = sym; setDefaultQty(); render(); return; }
+  const s = makeUsStock(sym, name);
+  try {
+    if (!applyQuote(s, await fhQuote(sym))) return flash(`No quote data for ${sym}.`, true);
+  } catch (e) { return flash(e.message, true); }
+  s.lastPoll = Date.now();
+  stocks.push(s); selected = sym;
+  setDefaultQty(); save(); render();
+}
+
+function removeTicker(sym) {
+  if (stocks.length <= 1) return;
+  if ((account.positions[sym] && account.positions[sym].qty > 0) || account.orders.some(o => o.sym === sym)) return flash(`Close ${sym} positions and orders before removing it.`, true);
+  stocks = stocks.filter(s => s.sym !== sym);
+  delete account.positions[sym];
+  if (selected === sym) selected = stocks[0].sym;
+  save(); render();
+}
+
+function marketNote(s) {
+  if (!s.quoteT) return '';
+  const age = Date.now() - s.quoteT;
+  return age > 15 * 60000 ? ` · market closed? last trade ${new Date(s.quoteT).toLocaleString()}` : '';
+}
+
+function showKeyPrompt(show) { $('keybox').hidden = !show; }
+
 // ---------- Persistence ----------
 function save() {
   if (!ready) return;
   try {
     if (mode === 'sim') localStorage.setItem(SAVE_KEY, JSON.stringify({ stocks, account, selected, nextOrderId }));
+    else if (mode === 'us') localStorage.setItem(US_KEY, JSON.stringify({ account, selected, nextOrderId, watch: stocks.map(x => [x.sym, x.name]) }));
     else localStorage.setItem(LIVE_KEY, JSON.stringify({ account, selected, nextOrderId }));
   } catch (e) { /* storage unavailable */ }
 }
@@ -483,14 +645,39 @@ async function startMode(m, persist = true) {
   mode = m;
   if (persist) try { localStorage.setItem(MODE_KEY, m); } catch (e) { /* ignore */ }
   $('mode').value = m;
-  $('speed').disabled = m === 'live';
+  $('speed').disabled = m !== 'sim';
   $('qty').step = m === 'live' ? '0.0001' : '1';
   $('qty').min = m === 'live' ? '0' : '1';
+  $('searchwrap').hidden = m !== 'us';
+  showKeyPrompt(false);
+  usStatus = '';
   tickCount = 0;
   if (m === 'sim') {
     const d = readSave(SAVE_KEY);
     if (d && d.stocks && d.account) ({ stocks, account, selected, nextOrderId } = d); else newGame();
     $('news').textContent = 'Markets open. Good luck.';
+  } else if (m === 'us') {
+    const d = readSave(US_KEY);
+    const watch = d && d.watch && d.watch.length ? d.watch : DEFAULT_WATCH.map(x => [x, x]);
+    stocks = watch.map(([sym, name]) => makeUsStock(sym, name));
+    if (d && d.account) ({ account, nextOrderId } = d); else { account = newAccount(); nextOrderId = 1; }
+    selected = d && stockOf(d.selected) ? d.selected : stocks[0].sym;
+    if (!fhKey) {
+      $('news').textContent = 'US stocks need a free Finnhub API key (it stays in this browser).';
+      showKeyPrompt(true);
+      ready = false;
+      return;
+    }
+    $('news').textContent = 'Fetching US stock quotes…';
+    try {
+      await Promise.all(stocks.map(async s => { applyQuote(s, await fhQuote(s.sym)); s.lastPoll = Date.now(); }));
+    } catch (e) {
+      if (myGen !== gen) return;
+      showKeyPrompt(true); $('keymsg').textContent = e.message;
+      $('news').textContent = 'Could not load quotes: ' + e.message;
+      return;
+    }
+    if (myGen !== gen) return;
   } else {
     $('news').textContent = 'Connecting to Binance market data…';
     stocks = LIVE_UNIVERSE.map(u => ({ ...u, live: true, price: 0, open: 0, candles: [], cur: null, book: { bids: [], asks: [] } }));
@@ -510,10 +697,13 @@ async function startMode(m, persist = true) {
   ready = true;
   setDefaultQty();
   render();
-  setSpeed(m === 'live' ? 1000 : +$('speed').value);
+  setSpeed(m === 'sim' ? +$('speed').value : 1000);
 }
 
 bind();
 let savedMode = 'live';
-try { savedMode = localStorage.getItem(MODE_KEY) === 'sim' ? 'sim' : 'live'; } catch (e) { /* ignore */ }
+try { const m = localStorage.getItem(MODE_KEY); if (m === 'sim' || m === 'us') savedMode = m; } catch (e) { /* ignore */ }
+let savedTheme = 'dark';
+try { if (localStorage.getItem(THEME_KEY) === 'light') savedTheme = 'light'; } catch (e) { /* ignore */ }
+applyTheme(savedTheme);
 startMode(savedMode);

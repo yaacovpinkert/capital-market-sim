@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Capital Market Trading Simulator</title>
+<script>try { document.documentElement.dataset.theme = localStorage.getItem("capitalsim-theme") === "light" ? "light" : "dark"; } catch (e) { document.documentElement.dataset.theme = "dark"; }</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,6 +14,7 @@
     <label>Data
       <select id="mode">
         <option value="live">Live crypto (Binance)</option>
+        <option value="us">US stocks (Finnhub key)</option>
         <option value="sim">Simulated stocks</option>
       </select>
     </label>
@@ -24,6 +26,7 @@
         <option value="0">Paused</option>
       </select>
     </label>
+    <button id="theme" class="ghost">☀ Light mode</button>
     <button id="reset" class="ghost">Reset account</button>
   </div>
 </header>
@@ -35,6 +38,15 @@
   <div><span>Realized P&amp;L</span><b id="rpnl">–</b></div>
 </section>
 
+<div id="searchwrap" class="searchwrap" hidden>
+  <input id="search" type="search" placeholder="Search any US stock (Nasdaq, NYSE, AMEX) by ticker or company name…" autocomplete="off">
+  <div id="results" class="results" hidden></div>
+</div>
+<div id="keybox" class="keybox" hidden>
+  <b>Finnhub API key needed.</b> Get a free one at <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a>, paste it here. It is stored only in this browser (localStorage), never sent anywhere except Finnhub.
+  <div class="keyrow"><input id="keyinput" type="password" placeholder="Finnhub API key" autocomplete="off"><button id="keysave" class="primary">Save &amp; connect</button></div>
+  <div id="keymsg" class="msg err"></div>
+</div>
 <div id="ticker" class="ticker"></div>
 <div id="news" class="news">Markets open. Good luck.</div>
 
