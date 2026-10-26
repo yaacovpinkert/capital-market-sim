@@ -53,7 +53,21 @@
 <main>
   <section class="panel chart-panel">
     <div class="panel-head"><b id="chartTitle"></b><span id="chartPrice"></span></div>
+    <div class="toolbar">
+      <div class="seg tf" id="tfseg" hidden>
+        <button data-tf="1m">1m</button><button data-tf="5m">5m</button><button data-tf="1h">1h</button><button data-tf="1d">1d</button>
+      </div>
+      <div class="chips">
+        <label><input type="checkbox" data-ind="sma"> SMA 20</label>
+        <label><input type="checkbox" data-ind="ema"> EMA 50</label>
+        <label><input type="checkbox" data-ind="bb"> Bollinger</label>
+        <label><input type="checkbox" data-ind="vol"> Volume</label>
+        <label><input type="checkbox" data-ind="rsi"> RSI</label>
+        <label><input type="checkbox" data-ind="macd"> MACD</label>
+      </div>
+    </div>
     <canvas id="chart"></canvas>
+    <div class="hint">Scroll to zoom · drag to pan · double-click to reset · hover for the crosshair</div>
   </section>
 
   <section class="panel book-panel">
@@ -91,9 +105,42 @@
     <table id="orders"></table>
   </section>
 
-  <section class="panel">
+  <section class="panel wide">
     <div class="panel-head"><b>Equity curve</b></div>
     <canvas id="eqchart"></canvas>
+  </section>
+
+  <section class="panel wide" id="lab">
+    <div class="panel-head"><b>Strategy lab</b><small class="mute">backtest on real history, then run it live on your paper account</small></div>
+    <div class="labgrid">
+      <div class="labform">
+        <label>Strategy <select id="strat"></select></label>
+        <div id="stratDesc" class="mute small"></div>
+        <div id="stratParams" class="params"></div>
+        <label>History
+          <select id="labBars">
+            <option value="300">300 candles</option>
+            <option value="500" selected>500 candles</option>
+            <option value="1000">1000 candles</option>
+          </select>
+        </label>
+        <button id="runBt" class="primary">Run backtest on selected symbol</button>
+        <label class="check"><input type="checkbox" id="autoOn"> Run live on my account · <input id="alloc" type="number" min="1" max="100" value="50" class="mini">% of equity per entry</label>
+        <pre id="autolog" class="autolog"></pre>
+      </div>
+      <div class="labres">
+        <div id="btStats"></div>
+        <canvas id="btchart"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel wide">
+    <div class="panel-head"><b>Bot traders leaderboard</b><span><small id="botsState" class="mute"></small> <label class="check inline"><input type="checkbox" id="botsOn"> Bots trading</label></span></div>
+    <div class="botgrid">
+      <table id="leader"></table>
+      <canvas id="race"></canvas>
+    </div>
   </section>
 
   <section class="panel wide">
@@ -103,6 +150,10 @@
 </main>
 
 <footer>Live mode: real Binance market prices and order book, paper-traded. Simulated mode: randomly generated prices. Educational only, not investment advice.</footer>
+<script src="indicators.js"></script>
+<script src="strategies.js"></script>
+<script src="chart.js"></script>
+<script src="lab.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

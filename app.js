@@ -3,7 +3,7 @@
 const START_CASH = 100000;
 const COMMISSION = 0.0005; // 0.05% per fill
 const TICKS_PER_CANDLE = 6;
-const MAX_CANDLES = 80;
+const MAX_CANDLES = 500;
 const SAVE_KEY = 'capitalsim-sim-v2';
 const LIVE_KEY = 'capitalsim-live-v1';
 const MODE_KEY = 'capitalsim-mode';
@@ -52,7 +52,7 @@ const NEWS = [
 ];
 
 let stocks, account, selected, nextOrderId, tickCount, timer;
-let mode = 'live', ready = false, gen = 0, ws = null, wsTimer = null, wsState = 'connecting';
+let mode = 'live', tfBusy = false, ready = false, gen = 0, ws = null, wsTimer = null, wsState = 'connecting';
 
 function gauss() {
   let u = 0, v = 0;
@@ -68,7 +68,7 @@ function newGame() {
   stocks = UNIVERSE.map(u => {
     const s = { ...u, dp: 2, live: false, open: u.price, volMult: 1, candles: [], cur: null, book: { bids: [], asks: [] } };
     // pre-generate history so the chart isn't empty
-    for (let i = 0; i < 40 * TICKS_PER_CANDLE; i++) stepPrice(s);
+    for (let i = 0; i < 120 * TICKS_PER_CANDLE; i++) stepPrice(s);
     s.open = s.price;
     return s;
   });
@@ -80,11 +80,12 @@ function newGame() {
 }
 
 function stepPrice(s) {
-  const sig = s.sigma * s.volMult;
+  const sig = s.sigma * s.volMult, prev = s.price;
   s.price = Math.max(0.5, s.price * Math.exp(s.drift - 0.5 * sig * sig + sig * gauss()));
   s.volMult = 1 + (s.volMult - 1) * 0.97; // volatility decays back to normal
   const p = r2(s.price);
-  if (!s.cur) s.cur = { o: p, h: p, l: p, c: p, n: 0 };
+  if (!s.cur) s.cur = { t: (s.seq = (s.seq || 0) + 1), o: p, h: p, l: p, c: p, n: 0, v: 0 };
+  s.cur.v = (s.cur.v || 0) + Math.round(50 + Math.random() * 200 + Math.abs(Math.log(s.price / prev)) * 1e5);
   s.cur.h = Math.max(s.cur.h, p);
   s.cur.l = Math.min(s.cur.l, p);
   s.cur.c = p;
@@ -129,65 +130,78 @@ function marketFill(s, side, qty) {
 }
 
 // ---------- Account ----------
-const pos = sym => account.positions[sym] || (account.positions[sym] = { qty: 0, avg: 0 });
+// Every function takes the account explicitly, so the player and the bots share one order engine.
 const stockOf = sym => stocks.find(s => s.sym === sym);
-const reservedCash = () => account.orders.filter(o => o.side === 'buy').reduce((a, o) => a + o.qty * (o.type === 'limit' ? o.price : bestAsk(stockOf(o.sym)) * 1.02), 0);
-const reservedShares = sym => rq(account.orders.filter(o => o.side === 'sell' && o.sym === sym).reduce((a, o) => a + o.qty, 0));
+const pos = (a, sym) => a.positions[sym] || (a.positions[sym] = { qty: 0, avg: 0 });
+const reservedCash = a => a.orders.filter(o => o.side === 'buy').reduce((t, o) => t + o.qty * (o.type === 'limit' ? o.price : bestAsk(stockOf(o.sym)) * 1.02), 0);
+const reservedShares = (a, sym) => rq(a.orders.filter(o => o.side === 'sell' && o.sym === sym).reduce((t, o) => t + o.qty, 0));
 
-function equity() {
-  return account.cash + Object.entries(account.positions).reduce((a, [sym, p]) => a + (p.qty && stockOf(sym) ? p.qty * stockOf(sym).price : 0), 0);
+function equityOf(a) {
+  return a.cash + Object.entries(a.positions).reduce((t, [sym, p]) => t + (p.qty && stockOf(sym) ? p.qty * stockOf(sym).price : 0), 0);
 }
+const equity = () => equityOf(account);
 
-function execute(sym, side, qty, price, kind) {
-  const p = pos(sym);
+function execute(a, sym, side, qty, price, kind) {
+  const p = pos(a, sym);
   const fee = r2(qty * price * COMMISSION);
   let realized = 0;
   if (side === 'buy') {
-    account.cash -= qty * price + fee;
+    a.cash -= qty * price + fee;
     p.avg = (p.avg * p.qty + price * qty) / (p.qty + qty);
     p.qty = rq(p.qty + qty);
   } else {
-    account.cash += qty * price - fee;
+    a.cash += qty * price - fee;
     realized = (price - p.avg) * qty - fee;
     p.qty = rq(p.qty - qty);
     if (!p.qty) p.avg = 0;
-    account.realized += realized;
+    a.realized += realized;
   }
-  account.history.unshift({ t: new Date().toLocaleTimeString(), sym, side, qty, price, kind, fee, realized: side === 'sell' ? realized : null });
-  account.history = account.history.slice(0, 100);
+  a.nTrades = (a.nTrades || 0) + 1;
+  a.history.unshift({ t: new Date().toLocaleTimeString(), sym, side, qty, price, kind, fee, realized: side === 'sell' ? realized : null });
+  a.history = a.history.slice(0, 100);
 }
 
-function placeOrder(sym, side, type, qty, price) {
+const fail = msg => ({ ok: false, msg });
+const done = msg => ({ ok: true, msg });
+
+function submitOrder(a, sym, side, type, qty, price) {
   const s = stockOf(sym);
   qty = rq(qty);
   if (s.live) {
-    if (!(qty > 0)) return err('Enter a quantity greater than 0.');
-    if (qty * s.price < MIN_NOTIONAL) return err(`Minimum order value is $${MIN_NOTIONAL}.`);
-  } else if (!Number.isInteger(qty) || qty < 1) return err('Quantity must be a whole number ≥ 1.');
-  if (type !== 'market' && !(price > 0)) return err('Enter a valid price.');
-  if (side === 'sell' && qty > rq(pos(sym).qty - reservedShares(sym))) return err('Not enough shares available to sell (short selling is disabled).');
+    if (!(qty > 0)) return fail('Enter a quantity greater than 0.');
+    if (qty * s.price < MIN_NOTIONAL) return fail(`Minimum order value is $${MIN_NOTIONAL}.`);
+  } else if (!Number.isInteger(qty) || qty < 1) return fail('Quantity must be a whole number ≥ 1.');
+  if (type !== 'market' && !(price > 0)) return fail('Enter a valid price.');
+  if (side === 'sell' && qty > rq(pos(a, sym).qty - reservedShares(a, sym))) return fail('Not enough shares available to sell (short selling is disabled).');
   if (side === 'buy') {
     const est = qty * (type === 'market' ? marketFill(s, 'buy', qty) : type === 'limit' ? price : Math.max(price, bestAsk(s)));
-    if (est * (1 + COMMISSION) > account.cash - reservedCash()) return err('Insufficient buying power.');
+    if (est * (1 + COMMISSION) > a.cash - reservedCash(a)) return fail('Insufficient buying power.');
   }
   if (type === 'market') {
     const px = Number(marketFill(s, side, qty).toFixed(s.dp));
-    execute(sym, side, qty, px, 'market');
-    return ok(`Filled ${side} ${fq(qty)} ${sym} @ ${mp(s, px)} (avg, incl. slippage)`);
+    execute(a, sym, side, qty, px, 'market');
+    return done(`Filled ${side} ${fq(qty)} ${sym} @ ${mp(s, px)} (avg, incl. slippage)`);
   }
   if (type === 'limit' && ((side === 'buy' && price >= bestAsk(s)) || (side === 'sell' && price <= bestBid(s)))) {
     const px = side === 'buy' ? bestAsk(s) : bestBid(s);
-    execute(sym, side, qty, px, 'limit');
-    return ok(`Limit marketable: filled ${fq(qty)} ${sym} @ ${mp(s, px)}`);
+    execute(a, sym, side, qty, px, 'limit');
+    return done(`Limit marketable: filled ${fq(qty)} ${sym} @ ${mp(s, px)}`);
   }
   if (type === 'stop' && ((side === 'buy' && price <= s.price) || (side === 'sell' && price >= s.price)))
-    return err(side === 'sell' ? 'Sell stop must be below the current price.' : 'Buy stop must be above the current price.');
-  account.orders.push({ id: nextOrderId++, sym, side, type, qty, price });
-  return ok(`${type} ${side} order placed: ${fq(qty)} ${sym} @ ${mp(s, price)}`);
+    return fail(side === 'sell' ? 'Sell stop must be below the current price.' : 'Buy stop must be above the current price.');
+  a.orders.push({ id: nextOrderId++, sym, side, type, qty, price });
+  return done(`${type} ${side} order placed: ${fq(qty)} ${sym} @ ${mp(s, price)}`);
 }
 
-function processOrders() {
-  for (const o of [...account.orders]) {
+// UI wrapper for the player's account: shows the result in the ticket
+function placeOrder(sym, side, type, qty, price) {
+  const r = submitOrder(account, sym, side, type, qty, price);
+  flash(r.msg, !r.ok);
+  return r.ok;
+}
+
+function processOrders(a) {
+  for (const o of [...a.orders]) {
     const s = stockOf(o.sym);
     let fill = null;
     if (o.type === 'limit') {
@@ -198,9 +212,9 @@ function processOrders() {
       if (o.side === 'buy' && s.price >= o.price) fill = Number(marketFill(s, 'buy', o.qty).toFixed(s.dp));
     }
     if (fill === null) continue;
-    account.orders = account.orders.filter(x => x !== o);
-    if (o.side === 'buy' && o.qty * fill * (1 + COMMISSION) > account.cash) { flash(`Order #${o.id} rejected: insufficient cash.`, true); continue; }
-    execute(o.sym, o.side, o.qty, fill, o.type);
+    a.orders = a.orders.filter(x => x !== o);
+    if (o.side === 'buy' && o.qty * fill * (1 + COMMISSION) > a.cash) { flash(`Order #${o.id} rejected: insufficient cash.`, true); continue; }
+    execute(a, o.sym, o.side, o.qty, fill, o.type);
     flash(`${o.type} order #${o.id} filled: ${o.side} ${fq(o.qty)} ${o.sym} @ ${mp(s, fill)}`);
   }
 }
@@ -221,9 +235,12 @@ function tick() {
     }
   }
   if (mode === 'us') pollUs();
-  processOrders();
+  autoStep();
+  botStep();
+  processOrders(account);
   account.equityCurve.push(equity());
   if (account.equityCurve.length > 300) account.equityCurve.shift();
+  botRecord();
   render();
   if (tickCount % 10 === 0) save();
 }
@@ -237,7 +254,7 @@ function setSpeed(ms) {
 let C = {};
 function readTheme() {
   const cs = getComputedStyle(document.documentElement), v = n => cs.getPropertyValue(n).trim();
-  C = { mute: v('--mute'), line: v('--line'), up: v('--up'), down: v('--down'), ma: v('--ma'), accent: v('--accent'), order: v('--order') };
+  C = { text: v('--text'), panel: v('--panel'), mute: v('--mute'), line: v('--line'), up: v('--up'), down: v('--down'), ma: v('--ma'), accent: v('--accent'), order: v('--order') };
 }
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
@@ -253,8 +270,6 @@ function flash(text, bad) {
   m.textContent = text;
   m.className = 'msg ' + (bad ? 'err' : 'ok');
 }
-const err = t => (flash(t, true), false);
-const ok = t => (flash(t, false), true);
 
 function render() {
   if (!ready) return;
@@ -302,6 +317,8 @@ function render() {
       '<tr><td colspan="8" style="color:var(--mute)">No trades yet</td></tr>');
 
   drawEquity();
+  renderBots();
+  drawBt();
   updateEstimate();
 }
 
@@ -313,48 +330,6 @@ function fitCanvas(c) {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
   return { g, w, h };
-}
-
-function drawChart(s) {
-  const { g, w, h } = fitCanvas($('chart'));
-  const cs = s.cur ? [...s.candles, s.cur] : s.candles;
-  const padR = 52, padB = 4;
-  const hi = Math.max(...cs.map(c => c.h)), lo = Math.min(...cs.map(c => c.l));
-  const rng = (hi - lo) || 1, top = hi + rng * 0.05, bot = lo - rng * 0.05;
-  const y = v => (h - padB) * (1 - (v - bot) / (top - bot));
-  const cw = (w - padR) / MAX_CANDLES;
-  g.font = '11px system-ui'; g.fillStyle = C.mute; g.strokeStyle = C.line; g.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const v = bot + (top - bot) * i / 4, yy = y(v);
-    g.beginPath(); g.moveTo(0, yy); g.lineTo(w - padR, yy); g.stroke();
-    g.fillText(v.toFixed(s.dp), w - padR + 6, yy + 4);
-  }
-  cs.forEach((c, i) => {
-    const x = i * cw + cw / 2, up = c.c >= c.o;
-    g.strokeStyle = g.fillStyle = up ? C.up : C.down;
-    g.beginPath(); g.moveTo(x, y(c.h)); g.lineTo(x, y(c.l)); g.stroke();
-    const yt = y(Math.max(c.o, c.c)), hh = Math.max(1, Math.abs(y(c.o) - y(c.c)));
-    g.fillRect(x - cw * 0.35, yt, cw * 0.7, hh);
-  });
-  // 10-period moving average
-  g.strokeStyle = C.ma; g.lineWidth = 1.5; g.beginPath();
-  cs.forEach((c, i) => {
-    if (i < 9) return;
-    const m = cs.slice(i - 9, i + 1).reduce((a, k) => a + k.c, 0) / 10;
-    i === 9 ? g.moveTo(i * cw + cw / 2, y(m)) : g.lineTo(i * cw + cw / 2, y(m));
-  });
-  g.stroke();
-  // position avg price + open orders
-  const p = account.positions[s.sym];
-  const line = (v, col, label) => {
-    if (v < bot || v > top) return;
-    g.strokeStyle = col; g.setLineDash([5, 4]); g.lineWidth = 1;
-    g.beginPath(); g.moveTo(0, y(v)); g.lineTo(w - padR, y(v)); g.stroke(); g.setLineDash([]);
-    g.fillStyle = col; g.fillText(label, 6, y(v) - 3);
-  };
-  if (p && p.qty > 0) line(p.avg, C.accent, `avg cost ${fp(s, p.avg)}`);
-  account.orders.filter(o => o.sym === s.sym).forEach(o => line(o.price, C.order, `${o.type} ${o.side} #${o.id}`));
-  g.lineWidth = 1;
 }
 
 function drawEquity() {
@@ -372,7 +347,7 @@ function drawEquity() {
 // ---------- Ticket ----------
 let side = 'buy';
 function updateEstimate() {
-  const s = stockOf(selected), qty = parseInt($('qty').value, 10) || 0, type = $('otype').value;
+  const s = stockOf(selected), qty = parseFloat($('qty').value) || 0, type = $('otype').value;
   $('priceRow').hidden = type === 'market';
   $('oprice').step = Math.pow(10, -s.dp);
   if (document.activeElement !== $('oprice') && type !== 'market' && !$('oprice').dataset.touched)
@@ -387,7 +362,7 @@ function bind() {
     const rm = e.target.closest('[data-rm]');
     if (rm) return removeTicker(rm.dataset.rm);
     const t = e.target.closest('[data-sym]');
-    if (t) { selected = t.dataset.sym; delete $('oprice').dataset.touched; setDefaultQty(); render(); }
+    if (t) { selected = t.dataset.sym; delete $('oprice').dataset.touched; resetView(); setDefaultQty(); render(); }
   });
   $('sideSeg').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -401,7 +376,7 @@ function bind() {
   $('otype').addEventListener('change', () => { delete $('oprice').dataset.touched; updateEstimate(); });
   $('qty').addEventListener('input', updateEstimate);
   $('submit').addEventListener('click', () => {
-    placeOrder(selected, side, $('otype').value, parseInt($('qty').value, 10), parseFloat($('oprice').value));
+    placeOrder(selected, side, $('otype').value, parseFloat($('qty').value), parseFloat($('oprice').value));
     render(); save();
   });
   $('orders').addEventListener('click', e => {
@@ -437,10 +412,14 @@ function bind() {
   });
   document.addEventListener('click', e => { if (!e.target.closest('.searchwrap')) sres.hidden = true; });
   $('reset').addEventListener('click', () => {
-    if (!confirm('Reset this account?')) return;
+    if (!confirm('Reset your account and the bots?')) return;
     if (mode === 'sim') newGame(); else { account = newAccount(); nextOrderId = 1; }
+    initBots(null); stopAuto();
     save(); render();
   });
+  $('tfseg').addEventListener('click', e => { const b = e.target.closest('[data-tf]'); if (b) setTimeframe(b.dataset.tf); });
+  bindChart();
+  bindLab();
   window.addEventListener('resize', render);
 }
 
@@ -493,7 +472,7 @@ function applyQuote(s, q) {
   s.open = q.pc > 0 ? q.pc : q.c;
   s.quoteT = (q.t || 0) * 1000;
   s.dp = q.c < 1 ? 4 : 2;
-  const bucket = Math.floor(Date.now() / CANDLE_MS);
+  const bucket = Math.floor(Date.now() / CANDLE_MS) * CANDLE_MS;
   if (s.cur && s.cur.t !== bucket) { s.candles.push(s.cur); s.cur = null; }
   if (!s.cur) s.cur = { t: bucket, o: q.c, h: q.c, l: q.c, c: q.c };
   s.cur.h = Math.max(s.cur.h, q.c); s.cur.l = Math.min(s.cur.l, q.c); s.cur.c = q.c;
@@ -543,6 +522,7 @@ async function addTicker(sym, name) {
 function removeTicker(sym) {
   if (stocks.length <= 1) return;
   if ((account.positions[sym] && account.positions[sym].qty > 0) || account.orders.some(o => o.sym === sym)) return flash(`Close ${sym} positions and orders before removing it.`, true);
+  liquidateBots(sym);
   stocks = stocks.filter(s => s.sym !== sym);
   delete account.positions[sym];
   if (selected === sym) selected = stocks[0].sym;
@@ -561,9 +541,9 @@ function showKeyPrompt(show) { $('keybox').hidden = !show; }
 function save() {
   if (!ready) return;
   try {
-    if (mode === 'sim') localStorage.setItem(SAVE_KEY, JSON.stringify({ stocks, account, selected, nextOrderId }));
-    else if (mode === 'us') localStorage.setItem(US_KEY, JSON.stringify({ account, selected, nextOrderId, watch: stocks.map(x => [x.sym, x.name]) }));
-    else localStorage.setItem(LIVE_KEY, JSON.stringify({ account, selected, nextOrderId }));
+    if (mode === 'sim') localStorage.setItem(SAVE_KEY, JSON.stringify({ stocks, account, selected, nextOrderId, bots: botsPayload() }));
+    else if (mode === 'us') localStorage.setItem(US_KEY, JSON.stringify({ account, selected, nextOrderId, bots: botsPayload(), watch: stocks.map(x => [x.sym, x.name]) }));
+    else localStorage.setItem(LIVE_KEY, JSON.stringify({ account, selected, nextOrderId, bots: botsPayload() }));
   } catch (e) { /* storage unavailable */ }
 }
 function readSave(key) {
@@ -578,19 +558,52 @@ async function get(path) {
 }
 const levels = rows => rows.slice(0, 8).map(([p, q]) => ({ p: +p, q: +q }));
 
+async function fetchCandles(s, interval) {
+  const rows = await get(`/klines?symbol=${s.pair.toUpperCase()}&interval=${interval}&limit=${MAX_CANDLES}`);
+  const cs = rows.map(r => ({ t: r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4], v: +r[5] }));
+  return { cur: cs.pop(), candles: cs }; // the newest candle is still forming
+}
+
 async function snapshot(s) {
   const sym = s.pair.toUpperCase();
   const [k, d, t] = await Promise.all([
-    get(`/klines?symbol=${sym}&interval=1m&limit=${MAX_CANDLES}`),
+    fetchCandles(s, tf),
     get(`/depth?symbol=${sym}&limit=10`),
     get(`/ticker/24hr?symbol=${sym}`),
   ]);
-  const cs = k.map(r => ({ t: r[0], o: +r[1], h: +r[2], l: +r[3], c: +r[4] }));
-  s.cur = cs.pop();            // the newest 1m candle is still forming
-  s.candles = cs;
+  Object.assign(s, k);
   s.book = { bids: levels(d.bids), asks: levels(d.asks) };
   s.price = (bestBid(s) + bestAsk(s)) / 2;
   s.open = +t.openPrice;
+}
+
+async function setTimeframe(t) {
+  if (mode !== 'live' || t === tf || !ready || tfBusy) return;
+  const myGen = gen;
+  tfBusy = true;
+  closeSocket(); // stop old-interval candles arriving while we swap histories
+  wsState = `loading ${t} candles…`;
+  try {
+    const loaded = await Promise.all(stocks.map(s => fetchCandles(s, t)));
+    if (myGen !== gen) return;
+    stocks.forEach((s, i) => Object.assign(s, loaded[i]));
+    tf = t;
+    try { localStorage.setItem(TF_KEY, t); } catch (e) { /* ignore */ }
+    resetView();
+  } catch (e) {
+    if (myGen === gen) flash(`Could not load ${t} candles: ${e.message}`, true);
+  } finally {
+    tfBusy = false;
+  }
+  if (myGen !== gen) return;
+  syncToolbar();
+  openSocket(myGen);
+  render();
+}
+
+function syncToolbar() {
+  $('tfseg').hidden = mode !== 'live';
+  document.querySelectorAll('#tfseg button').forEach(b => b.classList.toggle('on', b.dataset.tf === tf));
 }
 
 function applyDepth(s, d) {
@@ -600,7 +613,7 @@ function applyDepth(s, d) {
 }
 
 function applyKline(s, k) {
-  const c = { t: k.t, o: +k.o, h: +k.h, l: +k.l, c: +k.c };
+  const c = { t: k.t, o: +k.o, h: +k.h, l: +k.l, c: +k.c, v: +k.v };
   if (s.cur && s.cur.t !== c.t) s.candles.push(s.cur);
   s.cur = k.x ? null : c;
   if (k.x) s.candles.push(c);
@@ -615,7 +628,7 @@ function closeSocket() {
 function openSocket(myGen) {
   closeSocket();
   wsState = 'connecting…';
-  const streams = stocks.flatMap(s => [`${s.pair}@depth10@1000ms`, `${s.pair}@kline_1m`]).join('/');
+  const streams = stocks.flatMap(s => [`${s.pair}@depth10@1000ms`, `${s.pair}@kline_${tf}`]).join('/');
   ws = new WebSocket(`${WS}?streams=${streams}`);
   ws.onopen = () => { wsState = 'connected'; };
   ws.onmessage = e => {
@@ -652,15 +665,17 @@ async function startMode(m, persist = true) {
   showKeyPrompt(false);
   usStatus = '';
   tickCount = 0;
+  stopAuto(); resetView(); marks = { sym: null, list: [] }; lab.bt = null; renderBtStats();
+  let savedBots = null;
   if (m === 'sim') {
     const d = readSave(SAVE_KEY);
-    if (d && d.stocks && d.account) ({ stocks, account, selected, nextOrderId } = d); else newGame();
+    if (d && d.stocks && d.account) { ({ stocks, account, selected, nextOrderId } = d); savedBots = d.bots; } else newGame();
     $('news').textContent = 'Markets open. Good luck.';
   } else if (m === 'us') {
     const d = readSave(US_KEY);
     const watch = d && d.watch && d.watch.length ? d.watch : DEFAULT_WATCH.map(x => [x, x]);
     stocks = watch.map(([sym, name]) => makeUsStock(sym, name));
-    if (d && d.account) ({ account, nextOrderId } = d); else { account = newAccount(); nextOrderId = 1; }
+    if (d && d.account) { ({ account, nextOrderId } = d); savedBots = d.bots; } else { account = newAccount(); nextOrderId = 1; }
     selected = d && stockOf(d.selected) ? d.selected : stocks[0].sym;
     if (!fhKey) {
       $('news').textContent = 'US stocks need a free Finnhub API key (it stays in this browser).';
@@ -682,7 +697,7 @@ async function startMode(m, persist = true) {
     $('news').textContent = 'Connecting to Binance market data…';
     stocks = LIVE_UNIVERSE.map(u => ({ ...u, live: true, price: 0, open: 0, candles: [], cur: null, book: { bids: [], asks: [] } }));
     const d = readSave(LIVE_KEY);
-    if (d && d.account) ({ account, selected, nextOrderId } = d); else { account = newAccount(); selected = 'BTC'; nextOrderId = 1; }
+    if (d && d.account) { ({ account, selected, nextOrderId } = d); savedBots = d.bots; } else { account = newAccount(); selected = 'BTC'; nextOrderId = 1; }
     if (!stockOf(selected)) selected = 'BTC';
     try {
       await Promise.all(stocks.map(snapshot));
@@ -694,6 +709,8 @@ async function startMode(m, persist = true) {
     if (myGen !== gen) return;
     openSocket(myGen);
   }
+  initBots(savedBots);
+  syncToolbar();
   ready = true;
   setDefaultQty();
   render();
