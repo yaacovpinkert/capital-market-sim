@@ -39,8 +39,16 @@
 </section>
 
 <div id="searchwrap" class="searchwrap" hidden>
-  <input id="search" type="search" placeholder="Search any US stock (Nasdaq, NYSE, AMEX) by ticker or company name…" autocomplete="off">
+  <div class="searchrow">
+    <input id="search" type="search" placeholder="Search any US stock (Nasdaq, NYSE, AMEX) by ticker or company name…" autocomplete="off">
+    <button id="forgetKeys" class="ghost" title="Remove the saved API keys from this browser">Forget keys</button>
+  </div>
   <div id="results" class="results" hidden></div>
+</div>
+<div id="tdbox" class="keybox" hidden>
+  <b>Optional: real candle history.</b> Free Finnhub keys have no price history, so the chart only fills as trades arrive. A free <a href="https://twelvedata.com/register" target="_blank" rel="noopener">Twelve Data</a> key (800 requests/day) loads real 1m / 5m / 1h / 1d candles. It is stored only in this browser.
+  <div class="keyrow"><input id="tdinput" type="password" placeholder="Twelve Data API key" autocomplete="off"><button id="tdsave" class="primary">Save</button></div>
+  <div id="tdmsg" class="msg err"></div>
 </div>
 <div id="keybox" class="keybox" hidden>
   <b>Finnhub API key needed.</b> Get a free one at <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a>, paste it here. It is stored only in this browser (localStorage), never sent anywhere except Finnhub.

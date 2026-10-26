@@ -234,7 +234,7 @@ function tick() {
       buildBook(s);
     }
   }
-  if (mode === 'us') pollUs();
+  if (mode === 'us') { pollUs(); if (tickCount % 60 === 0) refreshMarket(); }
   autoStep();
   botStep();
   processOrders(account);
@@ -274,7 +274,7 @@ function flash(text, bad) {
 function render() {
   if (!ready) return;
   if (mode === 'live') $('news').innerHTML = `<b>LIVE</b> Binance public market data · ${wsState} · orders are paper-traded against the real order book`;
-  if (mode === 'us' && fhKey) $('news').innerHTML = `<b>LIVE</b> US stock quotes via Finnhub (real prices, depth is synthesised)${usStatus ? ` · <span class="down">${usStatus}</span>` : ''}${marketNote(stockOf(selected))}`;
+  if (mode === 'us' && fhKey) $('news').innerHTML = usBanner();
   const s = stockOf(selected);
   const eq = equity();
   $('eq').textContent = money(eq);
@@ -362,7 +362,7 @@ function bind() {
     const rm = e.target.closest('[data-rm]');
     if (rm) return removeTicker(rm.dataset.rm);
     const t = e.target.closest('[data-sym]');
-    if (t) { selected = t.dataset.sym; delete $('oprice').dataset.touched; resetView(); setDefaultQty(); render(); }
+    if (t) { selected = t.dataset.sym; delete $('oprice').dataset.touched; resetView(); setDefaultQty(); render(); if (mode === 'us') loadUsHistory(stockOf(selected)).then(() => ready && render()); }
   });
   $('sideSeg').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -385,6 +385,25 @@ function bind() {
   });
   $('speed').addEventListener('change', e => setSpeed(+e.target.value));
   $('mode').addEventListener('change', e => startMode(e.target.value));
+  $('tdsave').addEventListener('click', async () => {
+    const k = $('tdinput').value.trim();
+    if (!k) return;
+    try {
+      await tdSeries('AAPL', '1d', 1, k);
+      tdKey = k; tdStatus = '';
+      try { localStorage.setItem(TD_KEY, k); } catch (e) { /* ignore */ }
+      $('tdinput').value = ''; $('tdmsg').textContent = '';
+      syncToolbar();
+      await loadUsHistory(stockOf(selected), true);
+      render();
+    } catch (e) { $('tdmsg').textContent = e.message; }
+  });
+  $('forgetKeys').addEventListener('click', () => {
+    if (!confirm('Remove the saved Finnhub and Twelve Data keys from this browser?')) return;
+    try { localStorage.removeItem(FH_KEY); localStorage.removeItem(TD_KEY); } catch (e) { /* ignore */ }
+    fhKey = ''; tdKey = ''; tdStatus = '';
+    startMode('us');
+  });
   $('theme').addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
   $('keysave').addEventListener('click', async () => {
     const k = $('keyinput').value.trim();
@@ -426,7 +445,7 @@ function bind() {
 // ---------- US stocks: ticker search (GitHub-hosted lists) + Finnhub quotes (your own free key) ----------
 const TICKER_LISTS = ['nasdaq', 'nyse', 'amex'].map(x => `https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/${x}/${x}_full_tickers.json`);
 const FH = 'https://finnhub.io/api/v1';
-const DEFAULT_WATCH = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'SPY'];
+const DEFAULT_WATCH = [['AAPL', 'Apple Inc.'], ['MSFT', 'Microsoft Corp.'], ['NVDA', 'NVIDIA Corp.'], ['TSLA', 'Tesla Inc.'], ['AMZN', 'Amazon.com Inc.'], ['SPY', 'SPDR S&P 500 ETF']];
 let tickerDb = null, tickerLoad = null, fhKey = '';
 try { fhKey = localStorage.getItem(FH_KEY) || ''; } catch (e) { /* ignore */ }
 
@@ -462,23 +481,127 @@ async function fhQuote(sym) {
 }
 
 function makeUsStock(sym, name) {
-  return { sym, name: name || sym, dp: 2, live: false, price: 0, open: 0, lastPoll: 0, quoteT: 0, candles: [], cur: null, book: { bids: [], asks: [] } };
+  return { sym, name: name || sym, dp: 2, live: false, price: 0, open: 0, lastPoll: 0, quoteT: 0, histTf: null, histAt: 0, candles: [], cur: null, book: { bids: [], asks: [] } };
 }
 
-const CANDLE_MS = 30000; // candles are built from the quotes seen while this page is open
+// ---- time helpers (US market runs on New York time) ----
+const TD = 'https://api.twelvedata.com';
+const TD_KEY = 'capitalsim-twelvedata-key';
+const TD_INTERVAL = { '1m': '1min', '5m': '5min', '1h': '1h', '1d': '1day' };
+const TF_MS = { '1m': 60000, '5m': 300000, '1h': 3600000, '1d': 86400000 };
+const nyFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+function nyParts(t) {
+  const o = {};
+  nyFmt.formatToParts(new Date(t)).forEach(p => { o[p.type] = p.value; });
+  return o;
+}
+// start of the candle containing time t, aligned like Twelve Data's (hourly candles start at :30 = the 9:30 open)
+function bucketOf(t, interval) {
+  if (interval === '1d') { const p = nyParts(t); return Date.UTC(+p.year, +p.month - 1, +p.day); }
+  const ms = TF_MS[interval], off = interval === '1h' ? 1800000 : 0;
+  return Math.floor((t - off) / ms) * ms + off;
+}
+function isRegularSession(t) {
+  const p = nyParts(t);
+  if (p.weekday === 'Sat' || p.weekday === 'Sun') return false;
+  const m = +p.hour * 60 + +p.minute;
+  return m >= 570 && m < 960; // 09:30-16:00 (holidays are not tracked locally)
+}
+function msToNextOpen(now = Date.now()) {
+  if (isRegularSession(now)) return 0;
+  for (let t = Math.ceil(now / 900000) * 900000, i = 0; i < 5 * 96; i++, t += 900000) if (isRegularSession(t)) return t - now;
+  return null;
+}
+const fmtDur = ms => { const m = Math.round(ms / 60000), d = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60); return (d ? d + 'd ' : '') + (d || h ? h + 'h ' : '') + (m % 60) + 'm'; };
+
+// Candles are built from the trades' own timestamps, so a closed market (same last trade) adds nothing.
 function applyQuote(s, q) {
   if (!(q.c > 0)) return false;
   s.price = q.c;
   s.open = q.pc > 0 ? q.pc : q.c;
-  s.quoteT = (q.t || 0) * 1000;
   s.dp = q.c < 1 ? 4 : 2;
-  const bucket = Math.floor(Date.now() / CANDLE_MS) * CANDLE_MS;
-  if (s.cur && s.cur.t !== bucket) { s.candles.push(s.cur); s.cur = null; }
-  if (!s.cur) s.cur = { t: bucket, o: q.c, h: q.c, l: q.c, c: q.c };
-  s.cur.h = Math.max(s.cur.h, q.c); s.cur.l = Math.min(s.cur.l, q.c); s.cur.c = q.c;
-  while (s.candles.length > MAX_CANDLES) s.candles.shift();
+  s.q = { o: q.o, h: q.h, l: q.l, pc: q.pc };
+  const t = (q.t || 0) * 1000;
+  if (t > s.quoteT || (t === s.quoteT && s.cur && q.c !== s.cur.c)) { // new trade (timestamps have 1s resolution, so also accept a new price)
+    s.quoteT = t;
+    const b = bucketOf(t, tf);
+    if (!s.cur) s.cur = { t: b, o: q.c, h: q.c, l: q.c, c: q.c };
+    else if (b > s.cur.t) {
+      // open continues from the previous close only for adjacent candles; after a gap (overnight, weekend) it is the first trade
+      const o = b - s.cur.t <= TF_MS[tf] * 1.5 ? s.cur.c : q.c;
+      s.candles.push(s.cur);
+      s.cur = { t: b, o, h: Math.max(o, q.c), l: Math.min(o, q.c), c: q.c };
+    }
+    else if (b === s.cur.t) { s.cur.h = Math.max(s.cur.h, q.c); s.cur.l = Math.min(s.cur.l, q.c); s.cur.c = q.c; }
+    while (s.candles.length > MAX_CANDLES) s.candles.shift();
+  }
   buildUsBook(s);
   return true;
+}
+
+// ---- market status ----
+let usMarket = null;
+async function refreshMarket() {
+  try {
+    const r = await fetch(`${FH}/stock/market-status?exchange=US&token=${encodeURIComponent(fhKey)}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    usMarket = { isOpen: !!j.isOpen, session: j.session || '', holiday: j.holiday || '' };
+  } catch (e) {
+    usMarket = { isOpen: isRegularSession(Date.now()), session: '', holiday: '', local: true };
+  }
+}
+
+function usBanner() {
+  const m = usMarket || { isOpen: isRegularSession(Date.now()) }, st = stockOf(selected);
+  let t = '<b>LIVE</b> US stock quotes via Finnhub · ';
+  if (m.isOpen) t += '<span class="up">market OPEN</span>';
+  else {
+    const d = msToNextOpen();
+    t += `<span class="down">market CLOSED</span>${m.session ? ` (${esc(m.session)})` : ''}${m.holiday ? ` · holiday: ${esc(m.holiday)}` : ''} — prices stay frozen at the last trade${d ? `; regular session opens in ${fmtDur(d)}` : ''}. <i>Live crypto mode trades 24/7.</i>`;
+  }
+  if (st && st.quoteT) t += ` · last trade ${new Date(st.quoteT).toLocaleString()}`;
+  if (usStatus) t += ` · <span class="down">${esc(usStatus)}</span>`;
+  if (tdStatus) t += ` · <span class="down">history: ${esc(tdStatus)}</span>`;
+  return t + ' · order-book depth is synthesised';
+}
+
+// ---- real candle history (optional Twelve Data key) ----
+let tdKey = '', tdStatus = '', histToken = 0;
+try { tdKey = localStorage.getItem(TD_KEY) || ''; } catch (e) { /* ignore */ }
+
+async function tdSeries(sym, interval, size = MAX_CANDLES, key = tdKey) {
+  const r = await fetch(`${TD}/time_series?symbol=${encodeURIComponent(fhSym(sym))}&interval=${TD_INTERVAL[interval]}&outputsize=${size}&timezone=UTC&order=asc&apikey=${encodeURIComponent(key)}`);
+  const j = await r.json().catch(() => ({}));
+  if (j.status === 'error' || !Array.isArray(j.values)) {
+    throw new Error(r.status === 429 || j.code === 429 ? 'Twelve Data rate limit (8 calls/min on the free plan), try again in a minute' : String(j.message || 'HTTP ' + r.status).replace(/\*\*/g, '').slice(0, 110));
+  }
+  return j.values.map(v => ({ t: Date.parse(v.datetime.length > 10 ? v.datetime.replace(' ', 'T') + 'Z' : v.datetime + 'T00:00:00Z'), o: +v.open, h: +v.high, l: +v.low, c: +v.close, v: +v.volume }));
+}
+
+async function loadUsHistory(s, force) {
+  if (!tdKey || !s) return;
+  if (!force && s.histTf === tf && Date.now() - s.histAt < 10 * 60000) return;
+  const token = s.histReq = ++histToken, myGen = gen, want = tf;
+  try {
+    const cs = await tdSeries(s.sym, want);
+    if (myGen !== gen || token !== s.histReq) return;
+    s.cur = cs.pop() || null; s.candles = cs; s.histTf = want; s.histAt = Date.now();
+    tdStatus = '';
+  } catch (e) {
+    if (myGen === gen) tdStatus = e.message;
+  }
+}
+
+function chartEmptyMessage(s) {
+  if (mode !== 'us') return null;
+  const lines = [];
+  if (!tdKey) lines.push('Not enough candles yet: free Finnhub keys include no price history.', 'Add a free Twelve Data key (box above) to load real 1m / 5m / 1h / 1d candles.');
+  else if (tdStatus) lines.push('Candle history unavailable: ' + tdStatus);
+  else lines.push('Loading candle history…');
+  if (usMarket && !usMarket.isOpen) lines.push('The US market is closed, so no new trades are arriving either.');
+  if (s.q && s.q.o) { const f = v => (+v).toFixed(s.dp); lines.push(`Last session: open ${f(s.q.o)}  high ${f(s.q.h)}  low ${f(s.q.l)}  last ${f(s.price)}  (previous close ${f(s.q.pc)})`); }
+  return lines;
 }
 
 // Free feeds have no Level 2 data, so depth is synthesised around the last real price.
@@ -517,6 +640,7 @@ async function addTicker(sym, name) {
   s.lastPoll = Date.now();
   stocks.push(s); selected = sym;
   setDefaultQty(); save(); render();
+  loadUsHistory(s).then(() => ready && render());
 }
 
 function removeTicker(sym) {
@@ -527,12 +651,6 @@ function removeTicker(sym) {
   delete account.positions[sym];
   if (selected === sym) selected = stocks[0].sym;
   save(); render();
-}
-
-function marketNote(s) {
-  if (!s.quoteT) return '';
-  const age = Date.now() - s.quoteT;
-  return age > 15 * 60000 ? ` · market closed? last trade ${new Date(s.quoteT).toLocaleString()}` : '';
 }
 
 function showKeyPrompt(show) { $('keybox').hidden = !show; }
@@ -578,7 +696,16 @@ async function snapshot(s) {
 }
 
 async function setTimeframe(t) {
-  if (mode !== 'live' || t === tf || !ready || tfBusy) return;
+  if (t === tf || !ready || tfBusy) return;
+  if (mode === 'us' && tdKey) {
+    tf = t;
+    try { localStorage.setItem(TF_KEY, t); } catch (e) { /* ignore */ }
+    resetView(); syncToolbar();
+    await loadUsHistory(stockOf(selected), true);
+    render();
+    return;
+  }
+  if (mode !== 'live') return;
   const myGen = gen;
   tfBusy = true;
   closeSocket(); // stop old-interval candles arriving while we swap histories
@@ -602,7 +729,8 @@ async function setTimeframe(t) {
 }
 
 function syncToolbar() {
-  $('tfseg').hidden = mode !== 'live';
+  $('tfseg').hidden = !(mode === 'live' || (mode === 'us' && !!tdKey));
+  $('tdbox').hidden = !(mode === 'us' && !!fhKey && !tdKey);
   document.querySelectorAll('#tfseg button').forEach(b => b.classList.toggle('on', b.dataset.tf === tf));
 }
 
@@ -673,7 +801,7 @@ async function startMode(m, persist = true) {
     $('news').textContent = 'Markets open. Good luck.';
   } else if (m === 'us') {
     const d = readSave(US_KEY);
-    const watch = d && d.watch && d.watch.length ? d.watch : DEFAULT_WATCH.map(x => [x, x]);
+    const watch = d && d.watch && d.watch.length ? d.watch : DEFAULT_WATCH;
     stocks = watch.map(([sym, name]) => makeUsStock(sym, name));
     if (d && d.account) { ({ account, nextOrderId } = d); savedBots = d.bots; } else { account = newAccount(); nextOrderId = 1; }
     selected = d && stockOf(d.selected) ? d.selected : stocks[0].sym;
@@ -715,6 +843,10 @@ async function startMode(m, persist = true) {
   setDefaultQty();
   render();
   setSpeed(m === 'sim' ? +$('speed').value : 1000);
+  if (m === 'us') {
+    refreshMarket().then(() => ready && render());
+    loadUsHistory(stockOf(selected)).then(() => ready && render());
+  }
 }
 
 bind();

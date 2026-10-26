@@ -48,13 +48,15 @@ function drawChart(s) {
     macd: IND.macd ? Indicators.macd(closes) : null,
   };
 
-  const count = Math.min(all.length, clamp(view.count, 10, MAX_CANDLES));
-  view.off = clamp(view.off, 0, all.length - count);
-  const end = all.length - view.off, start = end - count, vis = all.slice(start, end);
+  const slots = clamp(view.count, 10, MAX_CANDLES);
+  view.off = clamp(view.off, 0, Math.max(0, all.length - slots));
+  const end = all.length - view.off, start = Math.max(0, end - slots), vis = all.slice(start, end);
+  const pad0 = slots - vis.length; // empty slots on the left when there is less history than the window
   const hasTime = vis[0].t > 1e11;
   const padR = 56, padB = hasTime ? 16 : 4;
   const mainH = h - padB - nSub * SUB_H;
-  const cw = (w - padR) / count, xAt = i => i * cw + cw / 2;
+  const cw = (w - padR) / slots, xAt = i => (i + pad0) * cw + cw / 2;
+  const bw = Math.min(cw * 0.7, 16); // candle body width
 
   let hi = -Infinity, lo = Infinity;
   vis.forEach((c, i) => {
@@ -80,7 +82,7 @@ function drawChart(s) {
     vis.forEach((c, i) => {
       g.fillStyle = c.c >= c.o ? C.up : C.down;
       const bh = (c.v || 0) / vmax * (volH - 4);
-      g.fillRect(xAt(i) - cw * 0.35, mainH - bh, cw * 0.7, bh);
+      g.fillRect(xAt(i) - bw / 2, mainH - bh, bw, bh);
     });
     g.globalAlpha = 1;
   }
@@ -106,7 +108,7 @@ function drawChart(s) {
     const x = xAt(i);
     g.strokeStyle = g.fillStyle = c.c >= c.o ? C.up : C.down;
     g.beginPath(); g.moveTo(x, y(c.h)); g.lineTo(x, y(c.l)); g.stroke();
-    g.fillRect(x - cw * 0.35, y(Math.max(c.o, c.c)), cw * 0.7, Math.max(1, Math.abs(y(c.o) - y(c.c))));
+    g.fillRect(x - bw / 2, y(Math.max(c.o, c.c)), bw, Math.max(1, Math.abs(y(c.o) - y(c.c))));
   });
 
   if (ind.sma) plot(ind.sma, C.ma, 1.5, y);
@@ -136,7 +138,7 @@ function drawChart(s) {
     vis.forEach((c, i) => {
       const side = byT.get(c.t);
       if (!side) return;
-      const x = xAt(i), sz = Math.min(7, cw * 0.5) + 2, buy = side === 'buy';
+      const x = xAt(i), sz = Math.min(7, bw * 0.7) + 2, buy = side === 'buy';
       const y0 = buy ? y(c.l) + 4 : y(c.h) - 4, dir = buy ? 1 : -1;
       g.fillStyle = buy ? C.up : C.down;
       g.beginPath(); g.moveTo(x, y0); g.lineTo(x - sz, y0 + dir * sz * 1.6); g.lineTo(x + sz, y0 + dir * sz * 1.6); g.closePath(); g.fill();
@@ -169,21 +171,28 @@ function drawChart(s) {
       const v = ind.macd.hist[start + i];
       if (v == null) return;
       g.fillStyle = v >= 0 ? C.up : C.down;
-      g.fillRect(xAt(i) - cw * 0.35, Math.min(yy(0), yy(v)), cw * 0.7, Math.max(1, Math.abs(yy(v) - yy(0))));
+      g.fillRect(xAt(i) - bw / 2, Math.min(yy(0), yy(v)), bw, Math.max(1, Math.abs(yy(v) - yy(0))));
     });
     g.globalAlpha = 1;
     plot(ind.macd.macd, C.accent, 1.5, yy); plot(ind.macd.signal, C.ma, 1.5, yy);
   });
 
+  const note = all.length < 5 && typeof chartEmptyMessage === 'function' ? chartEmptyMessage(s) : null;
+  if (note && note.length) { // say why the chart is empty instead of leaving it blank
+    g.fillStyle = C.mute; g.textAlign = 'center';
+    note.forEach((line, i) => g.fillText(line, (w - padR) / 2, priceH / 2 - (note.length - 1) * 8 + i * 16));
+    g.textAlign = 'left';
+  }
+
   if (hasTime) {
     g.fillStyle = C.mute; g.textAlign = 'center';
-    for (let k = 0; k < 5; k++) { const i = Math.round(k * (count - 1) / 4); g.fillText(timeLabel(vis[i].t, tf), clamp(xAt(i), 18, w - padR - 18), h - 3); }
+    for (let k = 0; k < 5; k++) { const i = Math.round(k * (vis.length - 1) / 4); g.fillText(timeLabel(vis[i].t, tf), clamp(xAt(i), 18, w - padR - 18), h - 3); }
     g.textAlign = 'left';
   }
 
   // crosshair + tooltip
   if (mouse && mouse.x >= 0 && mouse.x < w - padR && mouse.y >= 0 && mouse.y < h) {
-    const i = clamp(Math.floor(mouse.x / cw), 0, vis.length - 1), c = vis[i], gi = start + i, x = xAt(i);
+    const i = clamp(Math.floor(mouse.x / cw) - pad0, 0, vis.length - 1), c = vis[i], gi = start + i, x = xAt(i);
     g.strokeStyle = C.mute; g.setLineDash([3, 3]);
     g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h - padB); g.stroke();
     if (mouse.y < priceH) {

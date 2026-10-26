@@ -106,3 +106,7 @@ input.mini { width: 56px; margin: 0; padding: 3px 6px; }
 @media (max-width: 900px) { .labgrid, .botgrid { grid-template-columns: 1fr; } }
 .primary:not(.buy):not(.sell) { background: var(--accent); border-color: var(--accent); }
 .primary:disabled { opacity: .6; cursor: wait; }
+
+.searchrow { display: flex; gap: 8px; }
+.searchrow input { flex: 1; }
+.searchrow .ghost { white-space: nowrap; }
