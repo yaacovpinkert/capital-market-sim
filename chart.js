@@ -122,8 +122,8 @@ function drawChart(s) {
     g.fillStyle = col; g.fillText(label, 6, y(v) - 3);
   };
   const p = account.positions[s.sym];
-  if (p && p.qty > 0) refLine(p.avg, C.accent, `avg cost ${fp(s, p.avg)}`);
-  account.orders.filter(o => o.sym === s.sym).forEach(o => refLine(o.price, C.order, `${o.type} ${o.side} #${o.id}`));
+  if (p && p.qty > 0) refLine(p.avg, C.accent, t('chart.avgCost', { v: fp(s, p.avg) }));
+  account.orders.filter(o => o.sym === s.sym).forEach(o => refLine(o.price, C.order, t('chart.order', { type: t('type.' + o.type), side: t('side.' + o.side), id: o.id })));
   if (s.price >= bot && s.price <= top) {
     const yy = y(s.price), col = s.price >= s.open ? C.up : C.down;
     g.strokeStyle = col; g.globalAlpha = 0.6; g.setLineDash([2, 3]);
@@ -202,16 +202,22 @@ function drawChart(s) {
       g.fillStyle = C.panel; g.fillText(pv.toFixed(s.dp), w - padR + 4, mouse.y + 4);
     }
     g.setLineDash([]);
-    const parts = [hasTime ? new Date(c.t).toLocaleString() : `#${gi + 1}`, `O ${fp(s, c.o)}`, `H ${fp(s, c.h)}`, `L ${fp(s, c.l)}`, `C ${fp(s, c.c)}`];
-    if (c.v != null) parts.push('V ' + compact(c.v));
-    if (ind.sma && ind.sma[gi] != null) parts.push('SMA20 ' + fp(s, ind.sma[gi]));
-    if (ind.ema && ind.ema[gi] != null) parts.push('EMA50 ' + fp(s, ind.ema[gi]));
-    if (ind.rsi && ind.rsi[gi] != null) parts.push('RSI ' + ind.rsi[gi].toFixed(1));
-    if (ind.macd && ind.macd.hist[gi] != null) parts.push('MACD ' + ind.macd.macd[gi].toFixed(3) + ' / ' + ind.macd.signal[gi].toFixed(3));
-    const text = parts.join('   ');
+    const rtl = lang === 'he';
+    const row1 = [hasTime ? new Date(c.t).toLocaleString(locale()) : `#${gi + 1}`, `${t('tip.o')} ${fp(s, c.o)}`, `${t('tip.h')} ${fp(s, c.h)}`, `${t('tip.l')} ${fp(s, c.l)}`, `${t('tip.c')} ${fp(s, c.c)}`];
+    if (c.v != null) row1.push(t('tip.v') + ' ' + compact(c.v));
+    const row2 = [];
+    if (ind.sma && ind.sma[gi] != null) row2.push('SMA20 ' + fp(s, ind.sma[gi]));
+    if (ind.ema && ind.ema[gi] != null) row2.push('EMA50 ' + fp(s, ind.ema[gi]));
+    if (ind.rsi && ind.rsi[gi] != null) row2.push('RSI ' + ind.rsi[gi].toFixed(1));
+    if (ind.macd && ind.macd.hist[gi] != null) row2.push('MACD ' + ind.macd.macd[gi].toFixed(3) + ' / ' + ind.macd.signal[gi].toFixed(3));
+    const rows = [row1.join('   '), row2.join('   ')].filter(Boolean);
+    const boxW = Math.min(w - padR - 8, Math.max(...rows.map(r => g.measureText(r).width)) + 16);
+    const bx = rtl ? w - padR - 4 - boxW : 4;           // the box hugs the side where reading starts
     g.fillStyle = C.panel; g.globalAlpha = 0.92;
-    g.fillRect(4, 2, Math.min(w - padR - 8, g.measureText(text).width + 12), 18);
-    g.globalAlpha = 1; g.fillStyle = C.text; g.fillText(text, 10, 15);
+    g.fillRect(bx, 2, boxW, rows.length * 16 + 4);
+    g.globalAlpha = 1; g.fillStyle = C.text; g.textAlign = rtl ? 'right' : 'left';
+    rows.forEach((r, k) => g.fillText(r, rtl ? bx + boxW - 8 : bx + 8, 15 + k * 16));
+    g.textAlign = 'left';
   }
 }
 

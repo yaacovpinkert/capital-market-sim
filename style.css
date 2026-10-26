@@ -12,7 +12,7 @@
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
 header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; gap: 8px; }
 h1 { margin: 0; font-size: 20px; }
-.sub { font-size: 12px; font-weight: 400; color: var(--mute); margin-left: 8px; }
+.sub { font-size: 12px; font-weight: 400; color: var(--mute); margin-inline-start: 8px; }
 .head-right { display: flex; gap: 12px; align-items: center; }
 .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; padding: 12px 16px 0; }
 .summary div { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
@@ -22,7 +22,7 @@ h1 { margin: 0; font-size: 20px; }
 .tick { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; min-width: 120px; cursor: pointer; }
 .tick.sel { border-color: var(--accent); }
 .tick b { display: block; } .tick small { color: var(--mute); }
-.news { margin: 12px 16px 0; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 4px; }
+.news { margin: 12px 16px 0; padding: 8px 12px; border-inline-start: 3px solid var(--accent); background: var(--panel); border-radius: 4px; }
 main { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; padding: 12px 16px; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; }
 .panel-head { display: flex; justify-content: space-between; margin-bottom: 8px; }
@@ -70,7 +70,7 @@ footer { text-align: center; color: var(--mute); font-size: 12px; padding: 12px;
 .keyrow input { margin: 0; flex: 1; }
 .keyrow .primary { width: auto; margin: 0; background: var(--accent); border-color: var(--accent); }
 .tick { position: relative; }
-.tick .rm { position: absolute; top: 2px; right: 2px; padding: 0 5px; font-size: 11px; border: none; background: transparent; color: var(--mute); }
+.tick .rm { position: absolute; top: 2px; inset-inline-end: 2px; padding: 0 5px; font-size: 11px; border: none; background: transparent; color: var(--mute); }
 .tick .rm:hover { color: var(--down); }
 [hidden] { display: none !important; }
 
@@ -85,7 +85,7 @@ footer { text-align: center; color: var(--mute); font-size: 12px; padding: 12px;
 .hint, .mute { color: var(--mute); }
 .hint { font-size: 11px; margin-top: 4px; }
 .small { font-size: 12px; }
-small.mute { font-weight: 400; font-size: 12px; margin-left: 8px; }
+small.mute { font-weight: 400; font-size: 12px; margin-inline-start: 8px; }
 .labgrid { display: grid; grid-template-columns: minmax(240px, 1fr) 2fr; gap: 16px; }
 .labform label { display: block; margin: 8px 0; color: var(--mute); font-size: 12px; }
 .labform label.check { display: flex; flex-wrap: wrap; }
@@ -100,7 +100,7 @@ input.mini { width: 56px; margin: 0; padding: 3px 6px; }
 .tiles b { font-size: 16px; font-variant-numeric: tabular-nums; }
 #btchart, #race { height: 180px; }
 .botgrid { display: grid; grid-template-columns: minmax(320px, 1fr) 1fr; gap: 16px; align-items: start; }
-.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-inline-end: 6px; }
 #leader td:nth-child(2), #leader th:nth-child(2), #leader td:nth-child(3), #leader th:nth-child(3) { text-align: left; }
 .check.inline { display: inline-flex; }
 @media (max-width: 900px) { .labgrid, .botgrid { grid-template-columns: 1fr; } }
@@ -110,3 +110,15 @@ input.mini { width: 56px; margin: 0; padding: 3px 6px; }
 .searchrow { display: flex; gap: 8px; }
 .searchrow input { flex: 1; }
 .searchrow .ghost { white-space: nowrap; }
+
+/* ---- Hebrew / right-to-left ---- */
+canvas { direction: ltr; }                      /* charts keep the usual left-to-right time axis */
+html[dir="rtl"] th, html[dir="rtl"] td { text-align: right; unicode-bidi: plaintext; direction: ltr; }
+html[dir="rtl"] #leader td:nth-child(2), html[dir="rtl"] #leader th:nth-child(2), html[dir="rtl"] #leader td:nth-child(3), html[dir="rtl"] #leader th:nth-child(3) { text-align: right; }
+html[dir="rtl"] .summary b, html[dir="rtl"] .tick, html[dir="rtl"] #chartPrice, html[dir="rtl"] .tiles b { unicode-bidi: plaintext; direction: ltr; text-align: right; }
+html[dir="rtl"] .tick { text-align: right; }
+html[dir="rtl"] input[type="number"], html[dir="rtl"] input[type="password"] { direction: ltr; text-align: right; }
+html[dir="rtl"] .est, html[dir="rtl"] .msg, html[dir="rtl"] .news, html[dir="rtl"] .btnote { unicode-bidi: plaintext; text-align: start; }
+html[dir="rtl"] .autolog { unicode-bidi: plaintext; text-align: start; }
+html[dir="rtl"] .hit small { margin: 0 6px; }
+html[dir="rtl"] .tick .rm { inset-inline-end: auto; inset-inline-start: 2px; }

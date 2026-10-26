@@ -20,10 +20,21 @@ const sameBar = c => (c ? (c.t ?? null) : null);
 // ---------- strategy lab ----------
 const lab = { key: 'sma_cross', bars: 500, bt: null };
 
-function renderParams() {
-  const st = STRATS()[lab.key];
-  $('stratDesc').textContent = st.desc;
-  $('stratParams').innerHTML = st.params.map(p => `<label>${p.label}<input data-p="${p.k}" type="number" step="${p.step || 1}" value="${p.v}"></label>`).join('');
+const stratName = k => t('strat.' + k + '.name');
+
+// keepValues: preserve what the user typed (used when only the language changes)
+function renderParams(keepValues) {
+  const st = STRATS()[lab.key], old = keepValues ? readParams() : {};
+  $('stratDesc').textContent = t('strat.' + lab.key + '.desc');
+  $('stratParams').innerHTML = st.params.map(p => `<label>${esc(t('strat.' + lab.key + '.' + p.k))}<input data-p="${p.k}" type="number" step="${p.step || 1}" value="${old[p.k] ?? p.v}"></label>`).join('');
+}
+
+// (re)build the parts of the lab that contain translated text
+function renderLabStatic() {
+  $('strat').innerHTML = Object.keys(STRATS()).map(k => `<option value="${k}">${esc(stratName(k))}</option>`).join('');
+  $('strat').value = lab.key;
+  renderParams(true);
+  document.querySelectorAll('#labBars option').forEach(o => { o.textContent = t('lab.candles', { n: o.value }); });
 }
 
 function readParams() {
@@ -49,19 +60,19 @@ async function labCandles(s) {
 async function runBacktest() {
   const s = stockOf(selected), myGen = gen;
   $('runBt').disabled = true;
-  $('btStats').textContent = 'Loading history…';
+  $('btStats').textContent = t('lab.loading');
   try {
     const cs = await labCandles(s);
     if (myGen !== gen) return;
-    if (cs.length < 40) { $('btStats').textContent = `Only ${cs.length} candles available so far — let the market run a little, or use Live crypto mode for deep history.`; return; }
+    if (cs.length < 40) { $('btStats').textContent = t('lab.few', { n: cs.length }); return; }
     const res = Strategies.backtest(cs, lab.key, readParams(), { cash: START_CASH, fee: COMMISSION, slip: 0.0005, periodsPerYear: mode === 'live' ? PERIODS_PER_YEAR[tf] : 252 });
-    lab.bt = { ...res, sym: s.sym, key: lab.key, n: cs.length, tf: mode === 'live' ? tf : 'tick-built' };
+    lab.bt = { ...res, sym: s.sym, key: lab.key, n: cs.length, tf: mode === 'live' ? tf : null };
     marks = { sym: s.sym, list: res.trades.map(t => ({ t: t.t, side: t.side })) };
     renderBtStats();
     drawBt();
     if (ready) drawChart(s);
   } catch (e) {
-    $('btStats').textContent = 'Backtest failed: ' + e.message;
+    $('btStats').textContent = t('lab.failed', { e: e.message });
   } finally {
     $('runBt').disabled = false;
   }
@@ -69,15 +80,15 @@ async function runBacktest() {
 
 function renderBtStats() {
   const b = lab.bt;
-  if (!b) { $('btStats').textContent = 'Run a backtest to compare the strategy with buy & hold on real history.'; return; }
+  if (!b) { $('btStats').textContent = t('lab.prompt'); return; }
   const st = b.stats, tile = (label, val, c) => `<div><span>${label}</span><b class="${c || ''}">${val}</b></div>`;
   $('btStats').innerHTML =
-    `<div class="btnote">${esc(STRATS()[b.key].name)} on ${esc(b.sym)} · ${b.n} candles (${b.tf}) · 0.05% fee + 0.05% slippage per trade · markers shown on the main chart</div>` +
+    `<div class="btnote">${esc(t('lab.note', { strategy: stratName(b.key), sym: b.sym, n: b.n, tf: b.tf || t('lab.tfTicks') }))}</div>` +
     '<div class="tiles">' +
-    tile('Strategy return', pct(st.ret), cls(st.ret)) + tile('Buy & hold', pct(st.bhRet), cls(st.bhRet)) +
-    tile('Max drawdown', pct(st.maxDD), 'down') + tile('B&H drawdown', pct(st.bhDD), 'down') +
-    tile('Sharpe (ann.)', st.sharpe.toFixed(2)) + tile('Trades', st.trades) +
-    tile('Win rate', st.winRate == null ? '–' : (st.winRate * 100).toFixed(0) + '%') + tile('Time in market', (st.exposure * 100).toFixed(0) + '%') +
+    tile(t('lab.retStrategy'), pct(st.ret), cls(st.ret)) + tile(t('lab.retBh'), pct(st.bhRet), cls(st.bhRet)) +
+    tile(t('lab.dd'), pct(st.maxDD), 'down') + tile(t('lab.ddBh'), pct(st.bhDD), 'down') +
+    tile(t('lab.sharpe'), st.sharpe.toFixed(2)) + tile(t('lab.trades'), st.trades) +
+    tile(t('lab.win'), st.winRate == null ? '–' : (st.winRate * 100).toFixed(0) + '%') + tile(t('lab.expo'), (st.exposure * 100).toFixed(0) + '%') +
     '</div>';
 }
 
@@ -96,8 +107,8 @@ function drawBt() {
   [hi, 0, lo].forEach(v => g.fillText((v * 100).toFixed(0) + '%', 2, y(v) + 4));
   const line = (arr, col, width) => { g.strokeStyle = col; g.lineWidth = width; g.beginPath(); arr.forEach((v, i) => (i ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v)))); g.stroke(); };
   line(c, C.mute, 1.5); line(a, C.accent, 2);
-  g.fillStyle = C.accent; g.fillText('Strategy', 46, h - 4);
-  g.fillStyle = C.mute; g.fillText('Buy & hold', 110, h - 4);
+  g.fillStyle = C.accent; g.fillText(t('lab.legendStrat'), 46, h - 4);
+  g.fillStyle = C.mute; g.fillText(t('lab.legendBh'), 46 + g.measureText(t('lab.legendStrat')).width + 16, h - 4);
 }
 
 // ---------- live auto-trader (runs the selected strategy on the player's paper account) ----------
@@ -105,7 +116,7 @@ const auto = { on: false, sym: null, key: null, params: null, alloc: 50, lastKey
 
 function autoLog(text) {
   const el = $('autolog');
-  el.textContent = `${new Date().toLocaleTimeString()}  ${text}\n` + el.textContent.split('\n').slice(0, 7).join('\n');
+  el.textContent = `${new Date().toLocaleTimeString(locale())}  ${text}\n` + el.textContent.split('\n').slice(0, 7).join('\n');
 }
 
 function stopAuto() {
@@ -118,7 +129,7 @@ function startAuto() {
   const s = stockOf(selected);
   Object.assign(auto, { on: true, sym: s.sym, key: lab.key, params: readParams(), alloc: clamp(parseFloat($('alloc').value) || 50, 1, 100), lastKey: null });
   $('autolog').textContent = '';
-  autoLog(`armed: ${STRATS()[auto.key].name} on ${s.sym}, ${auto.alloc}% of equity per entry`);
+  autoLog(t('auto.armed', { strategy: stratName(auto.key), sym: s.sym, alloc: auto.alloc }));
 }
 
 // Spend `frac` of equity (capped by cash) on one market buy; returns the order result or null
@@ -148,10 +159,10 @@ function autoStep() {
   const sig = STRATS()[auto.key].signal(cs, auto.params, held);
   if (sig === 1 && !held) {
     const r = buyFraction(account, s, auto.alloc / 100);
-    autoLog(r ? (r.ok ? 'BUY  ' : 'buy rejected: ') + r.msg : 'buy signal, but not enough cash');
+    autoLog(r ? t(r.ok ? 'auto.buy' : 'auto.buyRej', { msg: r.msg }) : t('auto.noCash'));
   } else if (sig === 0 && held) {
     const r = sellAll(account, s);
-    autoLog(r ? (r.ok ? 'SELL ' : 'sell rejected: ') + r.msg : 'sell signal, nothing to sell');
+    autoLog(r ? t(r.ok ? 'auto.sell' : 'auto.sellRej', { msg: r.msg }) : t('auto.noPos'));
   }
 }
 
@@ -208,8 +219,8 @@ function liquidateBots(sym) {
 }
 
 function leaderboardRows() {
-  const me = { name: 'You', strat: auto.on ? `Human + ${STRATS()[auto.key].name}` : 'Human', acct: account, color: C.text };
-  return [me, ...bots.map((b, i) => ({ name: b.name, strat: STRATS()[b.strat].name, acct: b.acct, color: BOT_COLORS[i % BOT_COLORS.length] }))]
+  const me = { name: t('lb.you'), strat: auto.on ? t('lb.humanPlus', { strategy: stratName(auto.key) }) : t('lb.human'), acct: account, color: C.text };
+  return [me, ...bots.map((b, i) => ({ name: t('bot.' + b.id), strat: stratName(b.strat), acct: b.acct, color: BOT_COLORS[i % BOT_COLORS.length] }))]
     .map(r => ({ ...r, eq: equityOf(r.acct) }))
     .map(r => ({ ...r, ret: r.eq / r.acct.startEquity - 1 }))
     .sort((a, b) => b.eq - a.eq);
@@ -217,9 +228,9 @@ function leaderboardRows() {
 
 function renderBots() {
   const rows = leaderboardRows();
-  $('leader').innerHTML = '<tr><th>#</th><th>Trader</th><th>Strategy</th><th>Equity</th><th>Return</th><th>Trades</th></tr>' +
+  $('leader').innerHTML = `<tr><th>#</th><th>${t('lb.trader')}</th><th>${t('lb.strategy')}</th><th>${t('lb.equity')}</th><th>${t('lb.return')}</th><th>${t('lb.trades')}</th></tr>` +
     rows.map((r, i) => `<tr><td>${i + 1}</td><td><span class="swatch" style="background:${r.color}"></span>${esc(r.name)}</td><td>${esc(r.strat)}</td><td>${money(r.eq)}</td><td class="${cls(r.ret)}">${pct(r.ret)}</td><td>${r.acct.nTrades || 0}</td></tr>`).join('');
-  $('botsState').textContent = botsOn ? '' : 'bots paused';
+  $('botsState').textContent = botsOn ? '' : t('lb.paused');
   drawRace(rows);
 }
 
@@ -244,14 +255,12 @@ function drawRace(rows) {
 }
 
 function bindLab() {
-  $('strat').innerHTML = Object.entries(STRATS()).map(([k, s]) => `<option value="${k}">${esc(s.name)}</option>`).join('');
-  $('strat').value = lab.key;
-  renderParams();
+  renderLabStatic();
   renderBtStats();
-  $('strat').addEventListener('change', e => { lab.key = e.target.value; renderParams(); });
+  $('strat').addEventListener('change', e => { lab.key = e.target.value; renderParams(false); });
   $('labBars').addEventListener('change', e => { lab.bars = +e.target.value; });
   $('runBt').addEventListener('click', runBacktest);
-  $('autoOn').addEventListener('change', e => { if (e.target.checked) startAuto(); else { auto.on = false; autoLog('stopped'); } });
+  $('autoOn').addEventListener('change', e => { if (e.target.checked) startAuto(); else { auto.on = false; autoLog(t('auto.stopped')); } });
   $('botsOn').checked = botsOn;
   $('botsOn').addEventListener('change', e => {
     botsOn = e.target.checked;

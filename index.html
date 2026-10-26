@@ -4,59 +4,61 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Capital Market Trading Simulator</title>
-<script>try { document.documentElement.dataset.theme = localStorage.getItem("capitalsim-theme") === "light" ? "light" : "dark"; } catch (e) { document.documentElement.dataset.theme = "dark"; }</script>
+<script>try { document.documentElement.dataset.theme = localStorage.getItem("capitalsim-theme") === "light" ? "light" : "dark"; } catch (e) { document.documentElement.dataset.theme = "dark"; }
+try { var l = localStorage.getItem("capitalsim-lang"); if (l === "he" || (l !== "en" && /^he/i.test(navigator.language || ""))) { document.documentElement.lang = "he"; document.documentElement.dir = "rtl"; } } catch (e) { /* ignore */ }</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <h1>▲ CapitalSim <span class="sub">paper trading · no real money</span></h1>
+  <h1>▲ CapitalSim <span class="sub" data-i18n="app.sub">paper trading · no real money</span></h1>
   <div class="head-right">
-    <label>Data
+    <label><span data-i18n="hdr.data">Data</span>
       <select id="mode">
-        <option value="live">Live crypto (Binance)</option>
-        <option value="us">US stocks (Finnhub key)</option>
-        <option value="sim">Simulated stocks</option>
+        <option value="live" data-i18n="mode.live">Live crypto (Binance)</option>
+        <option value="us" data-i18n="mode.us">US stocks (Finnhub key)</option>
+        <option value="sim" data-i18n="mode.sim">Simulated stocks</option>
       </select>
     </label>
-    <label>Speed
+    <label><span data-i18n="hdr.speed">Speed</span>
       <select id="speed">
         <option value="1000">1×</option>
         <option value="500" selected>2×</option>
         <option value="200">5×</option>
-        <option value="0">Paused</option>
+        <option value="0" data-i18n="speed.paused">Paused</option>
       </select>
     </label>
+    <button id="lang" class="ghost" data-i18n="lang.switch" data-i18n-title="lang.title" title="Switch language">עברית</button>
     <button id="theme" class="ghost">☀ Light mode</button>
-    <button id="reset" class="ghost">Reset account</button>
+    <button id="reset" class="ghost" data-i18n="hdr.reset">Reset account</button>
   </div>
 </header>
 
 <section class="summary">
-  <div><span>Equity</span><b id="eq">–</b></div>
-  <div><span>Cash</span><b id="cash">–</b></div>
-  <div><span>Day P&amp;L</span><b id="pnl">–</b></div>
-  <div><span>Realized P&amp;L</span><b id="rpnl">–</b></div>
+  <div><span data-i18n="sum.equity">Equity</span><b id="eq">–</b></div>
+  <div><span data-i18n="sum.cash">Cash</span><b id="cash">–</b></div>
+  <div><span data-i18n="sum.pnl">Day P&amp;L</span><b id="pnl">–</b></div>
+  <div><span data-i18n="sum.rpnl">Realized P&amp;L</span><b id="rpnl">–</b></div>
 </section>
 
 <div id="searchwrap" class="searchwrap" hidden>
   <div class="searchrow">
-    <input id="search" type="search" placeholder="Search any US stock (Nasdaq, NYSE, AMEX) by ticker or company name…" autocomplete="off">
-    <button id="forgetKeys" class="ghost" title="Remove the saved API keys from this browser">Forget keys</button>
+    <input id="search" type="search" data-i18n-ph="search.live" placeholder="Track a coin: search any Binance USDT pair (e.g. ADA, AVAX, PEPE)…" autocomplete="off">
+    <button id="forgetKeys" class="ghost" data-i18n="search.forget" data-i18n-title="search.forgetTitle" title="Remove the saved API keys from this browser">Forget keys</button>
   </div>
   <div id="results" class="results" hidden></div>
 </div>
 <div id="tdbox" class="keybox" hidden>
-  <b>Optional: real candle history.</b> Free Finnhub keys have no price history, so the chart only fills as trades arrive. A free <a href="https://twelvedata.com/register" target="_blank" rel="noopener">Twelve Data</a> key (800 requests/day) loads real 1m / 5m / 1h / 1d candles. It is stored only in this browser.
-  <div class="keyrow"><input id="tdinput" type="password" placeholder="Twelve Data API key" autocomplete="off"><button id="tdsave" class="primary">Save</button></div>
+  <span data-i18n-html="td.html"><b>Optional: real candle history.</b> Free Finnhub keys have no price history, so the chart only fills as trades arrive. A free <a href="https://twelvedata.com/register" target="_blank" rel="noopener">Twelve Data</a> key (800 requests/day) loads real 1m / 5m / 1h / 1d candles. It is stored only in this browser.</span>
+  <div class="keyrow"><input id="tdinput" type="password" data-i18n-ph="td.ph" placeholder="Twelve Data API key" autocomplete="off"><button id="tdsave" class="primary" data-i18n="btn.save">Save</button></div>
   <div id="tdmsg" class="msg err"></div>
 </div>
 <div id="keybox" class="keybox" hidden>
-  <b>Finnhub API key needed.</b> Get a free one at <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a>, paste it here. It is stored only in this browser (localStorage), never sent anywhere except Finnhub.
-  <div class="keyrow"><input id="keyinput" type="password" placeholder="Finnhub API key" autocomplete="off"><button id="keysave" class="primary">Save &amp; connect</button></div>
+  <span data-i18n-html="key.html"><b>Finnhub API key needed.</b> Get a free one at <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a>, paste it here. It is stored only in this browser (localStorage), never sent anywhere except Finnhub.</span>
+  <div class="keyrow"><input id="keyinput" type="password" data-i18n-ph="key.ph" placeholder="Finnhub API key" autocomplete="off"><button id="keysave" class="primary" data-i18n="key.save">Save &amp; connect</button></div>
   <div id="keymsg" class="msg err"></div>
 </div>
 <div id="ticker" class="ticker"></div>
-<div id="news" class="news">Markets open. Good luck.</div>
+<div id="news" class="news" data-i18n="news.initial">Markets open. Good luck.</div>
 
 <main>
   <section class="panel chart-panel">
@@ -66,74 +68,74 @@
         <button data-tf="1m">1m</button><button data-tf="5m">5m</button><button data-tf="1h">1h</button><button data-tf="1d">1d</button>
       </div>
       <div class="chips">
-        <label><input type="checkbox" data-ind="sma"> SMA 20</label>
-        <label><input type="checkbox" data-ind="ema"> EMA 50</label>
-        <label><input type="checkbox" data-ind="bb"> Bollinger</label>
-        <label><input type="checkbox" data-ind="vol"> Volume</label>
-        <label><input type="checkbox" data-ind="rsi"> RSI</label>
-        <label><input type="checkbox" data-ind="macd"> MACD</label>
+        <label><input type="checkbox" data-ind="sma"> <span data-i18n="ind.sma">SMA 20</span></label>
+        <label><input type="checkbox" data-ind="ema"> <span data-i18n="ind.ema">EMA 50</span></label>
+        <label><input type="checkbox" data-ind="bb"> <span data-i18n="ind.bb">Bollinger</span></label>
+        <label><input type="checkbox" data-ind="vol"> <span data-i18n="ind.vol">Volume</span></label>
+        <label><input type="checkbox" data-ind="rsi"> <span data-i18n="ind.rsi">RSI</span></label>
+        <label><input type="checkbox" data-ind="macd"> <span data-i18n="ind.macd">MACD</span></label>
       </div>
     </div>
     <canvas id="chart"></canvas>
-    <div class="hint">Scroll to zoom · drag to pan · double-click to reset · hover for the crosshair</div>
+    <div class="hint" data-i18n="chart.hint">Scroll to zoom · drag to pan · double-click to reset · hover for the crosshair</div>
   </section>
 
   <section class="panel book-panel">
-    <div class="panel-head"><b>Order book</b></div>
+    <div class="panel-head"><b data-i18n="book.title">Order book</b></div>
     <table id="book"></table>
   </section>
 
   <section class="panel ticket">
-    <div class="panel-head"><b>Order ticket</b></div>
+    <div class="panel-head"><b data-i18n="ticket.title">Order ticket</b></div>
     <div class="seg" id="sideSeg">
-      <button data-side="buy" class="on buy">Buy</button>
-      <button data-side="sell" class="sell">Sell</button>
+      <button data-side="buy" class="on buy" data-i18n="btn.buy">Buy</button>
+      <button data-side="sell" class="sell" data-i18n="btn.sell">Sell</button>
     </div>
-    <label>Type
+    <label><span data-i18n="ticket.type">Type</span>
       <select id="otype">
-        <option value="market">Market</option>
-        <option value="limit">Limit</option>
-        <option value="stop">Stop</option>
+        <option value="market" data-i18n="opt.market">Market</option>
+        <option value="limit" data-i18n="opt.limit">Limit</option>
+        <option value="stop" data-i18n="opt.stop">Stop</option>
       </select>
     </label>
-    <label>Quantity <input id="qty" type="number" min="0" step="any" value="10"></label>
-    <label id="priceRow" hidden>Price <input id="oprice" type="number" min="0" step="any"></label>
+    <label><span data-i18n="ticket.qty">Quantity</span> <input id="qty" type="number" min="0" step="any" value="10"></label>
+    <label id="priceRow" hidden><span data-i18n="ticket.price">Price</span> <input id="oprice" type="number" min="0" step="any"></label>
     <div class="est" id="est"></div>
     <button id="submit" class="primary buy">Place buy order</button>
     <div id="msg" class="msg"></div>
   </section>
 
   <section class="panel">
-    <div class="panel-head"><b>Positions</b></div>
+    <div class="panel-head"><b data-i18n="pos.title">Positions</b></div>
     <table id="positions"></table>
   </section>
 
   <section class="panel">
-    <div class="panel-head"><b>Open orders</b></div>
+    <div class="panel-head"><b data-i18n="ord.title">Open orders</b></div>
     <table id="orders"></table>
   </section>
 
   <section class="panel wide">
-    <div class="panel-head"><b>Equity curve</b></div>
+    <div class="panel-head"><b data-i18n="eq.title">Equity curve</b></div>
     <canvas id="eqchart"></canvas>
   </section>
 
   <section class="panel wide" id="lab">
-    <div class="panel-head"><b>Strategy lab</b><small class="mute">backtest on real history, then run it live on your paper account</small></div>
+    <div class="panel-head"><b data-i18n="lab.title">Strategy lab</b><small class="mute" data-i18n="lab.sub">backtest on real history, then run it live on your paper account</small></div>
     <div class="labgrid">
       <div class="labform">
-        <label>Strategy <select id="strat"></select></label>
+        <label><span data-i18n="lab.strategy">Strategy</span> <select id="strat"></select></label>
         <div id="stratDesc" class="mute small"></div>
         <div id="stratParams" class="params"></div>
-        <label>History
+        <label><span data-i18n="lab.history">History</span>
           <select id="labBars">
-            <option value="300">300 candles</option>
-            <option value="500" selected>500 candles</option>
-            <option value="1000">1000 candles</option>
+            <option value="300">300</option>
+            <option value="500" selected>500</option>
+            <option value="1000">1000</option>
           </select>
         </label>
-        <button id="runBt" class="primary">Run backtest on selected symbol</button>
-        <label class="check"><input type="checkbox" id="autoOn"> Run live on my account · <input id="alloc" type="number" min="1" max="100" value="50" class="mini">% of equity per entry</label>
+        <button id="runBt" class="primary" data-i18n="lab.run">Run backtest on selected symbol</button>
+        <label class="check"><input type="checkbox" id="autoOn"> <span data-i18n="lab.auto1">Run live on my account ·</span> <input id="alloc" type="number" min="1" max="100" value="50" class="mini"><span data-i18n="lab.auto2">% of equity per entry</span></label>
         <pre id="autolog" class="autolog"></pre>
       </div>
       <div class="labres">
@@ -144,7 +146,7 @@
   </section>
 
   <section class="panel wide">
-    <div class="panel-head"><b>Bot traders leaderboard</b><span><small id="botsState" class="mute"></small> <label class="check inline"><input type="checkbox" id="botsOn"> Bots trading</label></span></div>
+    <div class="panel-head"><b data-i18n="lb.title">Bot traders leaderboard</b><span><small id="botsState" class="mute"></small> <label class="check inline"><input type="checkbox" id="botsOn"> <span data-i18n="lb.bots">Bots trading</span></label></span></div>
     <div class="botgrid">
       <table id="leader"></table>
       <canvas id="race"></canvas>
@@ -152,12 +154,13 @@
   </section>
 
   <section class="panel wide">
-    <div class="panel-head"><b>Trade history</b></div>
+    <div class="panel-head"><b data-i18n="hist.title">Trade history</b></div>
     <table id="history"></table>
   </section>
 </main>
 
-<footer>Live mode: real Binance market prices and order book, paper-traded. Simulated mode: randomly generated prices. Educational only, not investment advice.</footer>
+<footer data-i18n="footer">Live mode: real Binance market prices and order book, paper-traded. Simulated mode: randomly generated prices. Educational only, not investment advice.</footer>
+<script src="i18n.js"></script>
 <script src="indicators.js"></script>
 <script src="strategies.js"></script>
 <script src="chart.js"></script>
